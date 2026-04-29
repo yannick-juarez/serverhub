@@ -1,0 +1,424 @@
+{
+  "connections": {
+    "db": [
+      {
+        "db_id": "955dac6d-566e-4d38-a6c9-a8c1b346140d",
+        "name": "MySQL Local",
+        "engine": "mysql",
+        "host": "127.0.0.1",
+        "port": 3306,
+        "username": "root",
+        "password": "",
+        "default_database": "mysql",
+        "created_at": "2026-03-18T15:05:20.600Z",
+        "updated_at": "2026-03-18T15:05:20.600Z"
+      },
+      {
+        "db_id": "f671a577-8818-44b8-b6bb-b10db0711473",
+        "name": "PostgreSQL Local",
+        "engine": "postgresql",
+        "host": "127.0.0.1",
+        "port": 5432,
+        "username": "postgres",
+        "password": "myturn$7EZeYtGr",
+        "default_database": "postgres",
+        "created_at": "2026-03-18T15:05:20.600Z",
+        "updated_at": "2026-03-18T17:43:43.391Z"
+      }
+    ],
+    "ssh": []
+  },
+  "requests": {
+    "folders": [],
+    "items": []
+  },
+  "preferences": {
+    "filesRoot": "/root",
+    "theme": "dark",
+    "locale": "fr",
+    "databasePage": {
+      "leftPanelTab": "tables"
+    },
+    "userDisplayNames": {
+      "antoine.dupuich": "Antoine",
+      "yannick.juarez": "Yannick"
+    },
+    "sideDockNavOrderByUser": {
+      "admin": [
+        "stats",
+        "folders",
+        "calendar",
+        "messages",
+        "monitoring",
+        "database",
+        "situations",
+        "tools"
+      ],
+      "antoine.dupuich": [
+        "stats",
+        "calendar",
+        "folders",
+        "messages",
+        "monitoring",
+        "database",
+        "situations",
+        "tools"
+      ],
+      "yannick.juarez": [
+        "stats",
+        "folders",
+        "calendar",
+        "messages",
+        "monitoring",
+        "database",
+        "situations",
+        "tools"
+      ]
+    }
+  },
+  "users": [
+    {
+      "workspace_id": "demo",
+      "user_id": "3d02d136-696b-47a2-bfad-a882b22def9f",
+      "username": "yannick.juarez",
+      "password_hash": "$2a$10$zkeQEV5YwRmaFu5M8eoWEuFjaFdFvGQL4k/57fOFu4xZ4FOfQIWzu",
+      "is_active": true,
+      "created_at": "2026-03-18T15:05:20.600Z",
+      "updated_at": "2026-03-31T10:18:38.271Z"
+    },
+    {
+      "user_id": "4eb4492b-f240-4cca-aa77-31243368b8ea",
+      "workspace_id": "demo",
+      "username": "antoine.dupuich",
+      "password_hash": "$2a$10$vDYdSNjFesYBYq.K3EOTY.N71631xRS8NTKAa5GJuzFRTAygT7Q5i",
+      "is_active": true,
+      "created_at": "2026-03-31T09:56:27.369Z",
+      "updated_at": "2026-03-31T09:56:27.369Z"
+    }
+  ],
+  "messages": {
+    "channels": [
+      {
+        "channel_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "workspace_id": "demo",
+        "name": "test",
+        "description": "description test",
+        "created_at": "2026-03-25T23:54:29.983Z",
+        "updated_at": "2026-03-31T13:29:06.534Z",
+        "read_state": [
+          {
+            "user_id": "3d02d136-696b-47a2-bfad-a882b22def9f",
+            "last_read_at": "2026-03-31T13:29:06.534Z"
+          },
+          {
+            "user_id": "4eb4492b-f240-4cca-aa77-31243368b8ea",
+            "last_read_at": "2026-03-31T13:29:10.091Z"
+          }
+        ]
+      }
+    ],
+    "directs": [
+      {
+        "direct_id": "57cf3cae-2590-4636-9517-e9f2e7c879aa",
+        "workspace_id": "demo",
+        "participant_user_ids": [
+          "4eb4492b-f240-4cca-aa77-31243368b8ea",
+          "3d02d136-696b-47a2-bfad-a882b22def9f"
+        ],
+        "read_state": [
+          {
+            "user_id": "4eb4492b-f240-4cca-aa77-31243368b8ea",
+            "last_read_at": "2026-03-31T13:07:06.173Z"
+          },
+          {
+            "user_id": "3d02d136-696b-47a2-bfad-a882b22def9f",
+            "last_read_at": "2026-04-29T09:07:56.057Z"
+          }
+        ],
+        "created_at": "2026-03-31T12:08:05.021Z",
+        "updated_at": "2026-03-31T13:07:19.886Z"
+      }
+    ],
+    "groups": [],
+    "items": [
+      {
+        "message_id": "ae3a0c08-c359-4689-b637-1f6d237f5b99",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "3d02d136-696b-47a2-bfad-a882b22def9f",
+        "content": "salut",
+        "created_at": "2026-03-26T00:40:31.221Z",
+        "updated_at": "2026-03-26T00:40:31.221Z"
+      },
+      {
+        "message_id": "b84aa3ae-c552-4c1b-b7f6-f51ac56c84a6",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "3d02d136-696b-47a2-bfad-a882b22def9f",
+        "content": "ca va ?",
+        "created_at": "2026-03-31T09:50:47.265Z",
+        "updated_at": "2026-03-31T09:50:47.265Z"
+      },
+      {
+        "message_id": "d4de9e6d-64f6-479c-a8dd-d1e7c6014c00",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "3d02d136-696b-47a2-bfad-a882b22def9f",
+        "content": "test",
+        "created_at": "2026-03-31T12:11:59.174Z",
+        "updated_at": "2026-03-31T12:11:59.174Z"
+      },
+      {
+        "message_id": "7cbf0437-2ef9-4cc3-8744-eaf5a5665c84",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "3d02d136-696b-47a2-bfad-a882b22def9f",
+        "content": "test2",
+        "created_at": "2026-03-31T12:12:02.358Z",
+        "updated_at": "2026-03-31T12:12:02.358Z"
+      },
+      {
+        "message_id": "c85845dd-2a8f-4032-af46-c9c41ea7e752",
+        "workspace_id": "demo",
+        "conversation_type": "direct",
+        "conversation_id": "57cf3cae-2590-4636-9517-e9f2e7c879aa",
+        "author_user_id": "3d02d136-696b-47a2-bfad-a882b22def9f",
+        "content": "salut",
+        "created_at": "2026-03-31T12:12:09.386Z",
+        "updated_at": "2026-03-31T12:12:09.386Z"
+      },
+      {
+        "message_id": "cf6cc7e6-bb15-47ed-bae4-ecfa6ffde80c",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "4eb4492b-f240-4cca-aa77-31243368b8ea",
+        "content": "salut",
+        "created_at": "2026-03-31T12:32:10.553Z",
+        "updated_at": "2026-03-31T12:32:10.553Z"
+      },
+      {
+        "message_id": "6f8a84e4-562a-4658-ba6f-e3be1b64029f",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "4eb4492b-f240-4cca-aa77-31243368b8ea",
+        "content": "ca va?",
+        "created_at": "2026-03-31T12:32:20.364Z",
+        "updated_at": "2026-03-31T12:32:20.364Z"
+      },
+      {
+        "message_id": "648c4c58-d02d-49bf-9e52-3b31a37581c4",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "3d02d136-696b-47a2-bfad-a882b22def9f",
+        "content": "oui et toi ?",
+        "created_at": "2026-03-31T12:32:49.157Z",
+        "updated_at": "2026-03-31T12:32:49.157Z"
+      },
+      {
+        "message_id": "22477249-a303-41b8-95a3-2ae3e44a0e50",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "3d02d136-696b-47a2-bfad-a882b22def9f",
+        "content": "t'es la ?",
+        "created_at": "2026-03-31T12:56:56.866Z",
+        "updated_at": "2026-03-31T12:56:56.866Z"
+      },
+      {
+        "message_id": "12902b31-b2b3-4b75-ada6-511a1775a7ae",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "4eb4492b-f240-4cca-aa77-31243368b8ea",
+        "content": "yes",
+        "created_at": "2026-03-31T12:57:04.305Z",
+        "updated_at": "2026-03-31T12:57:04.305Z"
+      },
+      {
+        "message_id": "ab346667-8ee8-4d5c-941d-bae4f11837b8",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "4eb4492b-f240-4cca-aa77-31243368b8ea",
+        "content": "salut",
+        "created_at": "2026-03-31T13:01:43.807Z",
+        "updated_at": "2026-03-31T13:01:43.807Z"
+      },
+      {
+        "message_id": "2c8084b6-b0e3-484f-a111-73a00c0bdc8f",
+        "workspace_id": "demo",
+        "conversation_type": "direct",
+        "conversation_id": "57cf3cae-2590-4636-9517-e9f2e7c879aa",
+        "author_user_id": "4eb4492b-f240-4cca-aa77-31243368b8ea",
+        "content": "ca va ?",
+        "created_at": "2026-03-31T13:07:06.173Z",
+        "updated_at": "2026-03-31T13:07:06.173Z"
+      },
+      {
+        "message_id": "b9046a98-3872-4e3e-b017-d000fba746b1",
+        "workspace_id": "demo",
+        "conversation_type": "direct",
+        "conversation_id": "57cf3cae-2590-4636-9517-e9f2e7c879aa",
+        "author_user_id": "3d02d136-696b-47a2-bfad-a882b22def9f",
+        "content": "oui et toi ?",
+        "created_at": "2026-03-31T13:07:19.886Z",
+        "updated_at": "2026-03-31T13:07:19.886Z"
+      },
+      {
+        "message_id": "eeaed704-02d9-4e70-b952-257a541533fb",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "4eb4492b-f240-4cca-aa77-31243368b8ea",
+        "content": "hola",
+        "created_at": "2026-03-31T13:13:12.589Z",
+        "updated_at": "2026-03-31T13:13:12.589Z"
+      },
+      {
+        "message_id": "2a09f270-18c2-4b86-a634-8be579d72d1f",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "3d02d136-696b-47a2-bfad-a882b22def9f",
+        "content": "salut",
+        "created_at": "2026-03-31T13:13:21.950Z",
+        "updated_at": "2026-03-31T13:13:21.950Z"
+      },
+      {
+        "message_id": "47aa3a08-7494-4b77-9590-8ccf0a63aae2",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "4eb4492b-f240-4cca-aa77-31243368b8ea",
+        "content": "ca va ?",
+        "created_at": "2026-03-31T13:13:29.147Z",
+        "updated_at": "2026-03-31T13:13:29.147Z"
+      },
+      {
+        "message_id": "f4984292-ff00-4ce2-b9a7-09d5291db1ef",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "4eb4492b-f240-4cca-aa77-31243368b8ea",
+        "content": "hellop",
+        "created_at": "2026-03-31T13:22:29.298Z",
+        "updated_at": "2026-03-31T13:22:29.298Z"
+      },
+      {
+        "message_id": "bbdb1ade-21d5-414a-84de-73572e1a376b",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "3d02d136-696b-47a2-bfad-a882b22def9f",
+        "content": "test",
+        "created_at": "2026-03-31T13:23:04.643Z",
+        "updated_at": "2026-03-31T13:23:04.643Z"
+      },
+      {
+        "message_id": "bdfa3830-7b77-49af-8c80-0a2842f36cb3",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "4eb4492b-f240-4cca-aa77-31243368b8ea",
+        "content": "regergerg",
+        "created_at": "2026-03-31T13:25:54.432Z",
+        "updated_at": "2026-03-31T13:25:54.432Z"
+      },
+      {
+        "message_id": "d11b1e6c-b4c4-493d-905b-6baa20726578",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "3d02d136-696b-47a2-bfad-a882b22def9f",
+        "content": "wefwefwef",
+        "created_at": "2026-03-31T13:26:17.166Z",
+        "updated_at": "2026-03-31T13:26:17.166Z"
+      },
+      {
+        "message_id": "76ab0b80-bc95-479a-b0fc-af7d3b2fc526",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "3d02d136-696b-47a2-bfad-a882b22def9f",
+        "content": "wefwef",
+        "created_at": "2026-03-31T13:26:29.901Z",
+        "updated_at": "2026-03-31T13:26:29.901Z"
+      },
+      {
+        "message_id": "d50f7c3f-3073-4bb8-ad2c-44b326216a18",
+        "workspace_id": "demo",
+        "conversation_type": "channel",
+        "conversation_id": "8ebb7760-1676-40c1-8634-16ee830e69ca",
+        "author_user_id": "3d02d136-696b-47a2-bfad-a882b22def9f",
+        "content": "wefwefwef",
+        "created_at": "2026-03-31T13:29:06.534Z",
+        "updated_at": "2026-03-31T13:29:06.534Z"
+      }
+    ]
+  },
+  "calendar": {
+    "calendars": [
+      {
+        "calendar_id": "143ac4bd-69d2-4e8b-bd57-79ea83eac924",
+        "created_at": "2026-03-31T08:56:40.613Z",
+        "updated_at": "2026-03-31T08:56:40.613Z",
+        "name": "Personal",
+        "color": "#3b82f6",
+        "description": ""
+      },
+      {
+        "calendar_id": "aa532fab-b27d-416b-88c5-e7efed3a3769",
+        "created_at": "2026-03-31T09:06:30.386Z",
+        "updated_at": "2026-03-31T09:06:43.605Z",
+        "name": "NMRC//UT",
+        "color": "#ec4899",
+        "description": null
+      }
+    ],
+    "events": [
+      {
+        "event_id": "4b0c9b24-c094-4654-aa59-f0e4d6dacf47",
+        "created_at": "2026-03-31T08:57:05.090Z",
+        "updated_at": "2026-03-31T08:57:05.090Z",
+        "calendar_id": "143ac4bd-69d2-4e8b-bd57-79ea83eac924",
+        "title": "Video BeReal",
+        "description": "",
+        "location": "",
+        "all_day": false,
+        "start_at": "2026-03-31T10:15:00.000Z",
+        "end_at": "2026-03-31T11:00:00.000Z"
+      },
+      {
+        "event_id": "ada79a4c-27af-4f29-873f-5da42a12e504",
+        "created_at": "2026-03-31T09:07:14.750Z",
+        "updated_at": "2026-03-31T09:07:30.933Z",
+        "calendar_id": "aa532fab-b27d-416b-88c5-e7efed3a3769",
+        "title": "Module Preorder + Copilot",
+        "description": "",
+        "location": "",
+        "all_day": false,
+        "start_at": "2026-03-31T09:00:00.000Z",
+        "end_at": "2026-03-31T10:00:00.000Z"
+      },
+      {
+        "event_id": "b6e99e81-ce67-49b5-8a5e-423218c4fbff",
+        "created_at": "2026-03-31T09:38:35.492Z",
+        "updated_at": "2026-03-31T09:38:35.492Z",
+        "calendar_id": "143ac4bd-69d2-4e8b-bd57-79ea83eac924",
+        "title": "Envoyer CV Timéa",
+        "description": "",
+        "location": "",
+        "all_day": false,
+        "start_at": "2026-03-31T11:00:00.000Z",
+        "end_at": "2026-03-31T11:15:00.000Z"
+      }
+    ]
+  }
+}

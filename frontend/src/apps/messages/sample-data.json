@@ -1,0 +1,244 @@
+{
+  "avatarTones": [
+    "border-sky-500/50 bg-sky-500/20 text-sky-200",
+    "border-emerald-500/50 bg-emerald-500/20 text-emerald-200",
+    "border-violet-500/50 bg-violet-500/20 text-violet-200",
+    "border-amber-500/50 bg-amber-500/20 text-amber-200",
+    "border-rose-500/50 bg-rose-500/20 text-rose-200",
+    "border-teal-500/50 bg-teal-500/20 text-teal-200",
+    "border-pink-500/50 bg-pink-500/20 text-pink-200",
+    "border-indigo-500/50 bg-indigo-500/20 text-indigo-200"
+  ],
+  "workspaces": [
+    {
+      "id": "demo",
+      "name": "Demo Workspace",
+      "description": "Default demo workspace",
+      "channels": [
+        { "id": "general", "name": "general", "description": "General team communication and announcements", "unread": 3 },
+        { "id": "engineering", "name": "engineering", "description": "Engineering discussions, code reviews and technical topics", "unread": 1 },
+        { "id": "deployments", "name": "deployments", "description": "CI/CD pipeline notifications and deployment statuses" },
+        { "id": "alerts", "name": "alerts", "description": "System alerts, monitoring events and on-call notifications", "unread": 7 },
+        { "id": "random", "name": "random", "description": "Off-topic banter and fun" }
+      ],
+      "directMessages": [
+        { "id": "dm-alice", "name": "Alice Martin", "status": "online", "unread": 2 },
+        { "id": "dm-bob", "name": "Bob Chen", "status": "away" },
+        { "id": "dm-charlie", "name": "Charlie Duval", "status": "online" },
+        { "id": "dm-diana", "name": "Diana Müller", "status": "away", "unread": 1 }
+      ],
+      "channelMessages": {
+        "general": [
+          {
+            "id": "m1",
+            "author": "Alice Martin",
+            "role": "Lead Engineer",
+            "time": "09:14",
+            "content": "Good morning everyone! Quick reminder: sprint review is at 3 PM today.",
+            "ownership": "their"
+          },
+          {
+            "id": "m2",
+            "author": "Me",
+            "role": "Developer",
+            "time": "09:17",
+            "content": "Thanks for the reminder! I'll have the dashboard demo ready.",
+            "ownership": "mine"
+          },
+          {
+            "id": "m3",
+            "author": "Bob Chen",
+            "role": "DevOps",
+            "time": "09:22",
+            "content": "Deployment to staging went through cleanly this morning. All health checks passing.",
+            "ownership": "their"
+          },
+          {
+            "id": "m4",
+            "author": "Alice Martin",
+            "role": "Lead Engineer",
+            "time": "09:45",
+            "content": "Perfect. Here's the agenda for the review:",
+            "ownership": "their",
+            "proposal": {
+              "title": "Sprint 14 Review Agenda",
+              "items": [
+                "Dashboard v2 demo — 15 min",
+                "Monitoring module walkthrough — 10 min",
+                "Q&A and backlog grooming — 20 min",
+                "Next sprint planning — 15 min"
+              ],
+              "state": "waiting",
+              "waitingFor": "Product confirmation"
+            }
+          },
+          {
+            "id": "m5",
+            "author": "Me",
+            "role": "Developer",
+            "time": "09:47",
+            "content": "Looks good to me 👍",
+            "ownership": "mine"
+          }
+        ],
+        "engineering": [
+          {
+            "id": "e1",
+            "author": "Charlie Duval",
+            "role": "Backend Engineer",
+            "time": "08:30",
+            "content": "PR #142 is ready for review — adds pagination to the /api/logs endpoint.",
+            "ownership": "their"
+          },
+          {
+            "id": "e2",
+            "author": "Me",
+            "role": "Developer",
+            "time": "08:52",
+            "content": "I'll take a look now. Any specific area you want me to focus on?",
+            "ownership": "mine"
+          },
+          {
+            "id": "e3",
+            "author": "Charlie Duval",
+            "role": "Backend Engineer",
+            "time": "08:55",
+            "content": "The cursor-based pagination logic in the service layer would be most helpful. It's a bit non-obvious.",
+            "ownership": "their"
+          },
+          {
+            "id": "e4",
+            "author": "Me",
+            "role": "Developer",
+            "time": "09:01",
+            "content": "Got it, leaving comments now.",
+            "ownership": "mine"
+          }
+        ],
+        "deployments": [
+          {
+            "id": "d1",
+            "author": "CI Bot",
+            "role": "System",
+            "time": "07:00",
+            "content": "✅ Build #487 passed — branch: main — 2m 14s",
+            "ownership": "their",
+            "system": true
+          },
+          {
+            "id": "d2",
+            "author": "CI Bot",
+            "role": "System",
+            "time": "07:03",
+            "content": "🚀 Deployed to staging — serverhub:v0.9.4",
+            "ownership": "their",
+            "system": true
+          },
+          {
+            "id": "d3",
+            "author": "Bob Chen",
+            "role": "DevOps",
+            "time": "07:10",
+            "content": "Smoke tests passed. Promoting to production at 09:00 unless anyone objects.",
+            "ownership": "their"
+          },
+          {
+            "id": "d4",
+            "author": "Me",
+            "role": "Developer",
+            "time": "07:12",
+            "content": "No objections from me. Ship it!",
+            "ownership": "mine"
+          },
+          {
+            "id": "d5",
+            "author": "CI Bot",
+            "role": "System",
+            "time": "09:01",
+            "content": "🎉 Deployed to production — serverhub:v0.9.4",
+            "ownership": "their",
+            "system": true
+          }
+        ],
+        "alerts": [
+          {
+            "id": "a1",
+            "author": "Monitor",
+            "role": "System",
+            "time": "06:14",
+            "content": "⚠️ CPU usage > 80% on node prod-02 for 5 minutes. Auto-scaling triggered.",
+            "ownership": "their",
+            "system": true
+          },
+          {
+            "id": "a2",
+            "author": "Monitor",
+            "role": "System",
+            "time": "06:22",
+            "content": "✅ CPU usage back below threshold on prod-02. Auto-scaling complete.",
+            "ownership": "their",
+            "system": true
+          },
+          {
+            "id": "a3",
+            "author": "Bob Chen",
+            "role": "DevOps",
+            "time": "06:30",
+            "content": "All clear. I'm looking at the spike — likely the nightly analytics batch job.",
+            "ownership": "their"
+          }
+        ],
+        "random": [
+          {
+            "id": "r1",
+            "author": "Diana Müller",
+            "role": "Designer",
+            "time": "11:05",
+            "content": "Anyone else tried the new coffee machine? It's incredible ☕",
+            "ownership": "their"
+          },
+          {
+            "id": "r2",
+            "author": "Me",
+            "role": "Developer",
+            "time": "11:07",
+            "content": "Yes!! The oat milk option is a game changer.",
+            "ownership": "mine"
+          },
+          {
+            "id": "r3",
+            "author": "Charlie Duval",
+            "role": "Backend Engineer",
+            "time": "11:09",
+            "content": "10/10 productivity boost confirmed by engineering",
+            "ownership": "their"
+          }
+        ]
+      }
+    },
+    {
+      "id": "development",
+      "name": "Development Workspace",
+      "channels": [
+        { "id": "dev-general", "name": "general", "description": "Development workspace general channel" },
+        { "id": "dev-builds", "name": "builds", "description": "Build and CI notifications" }
+      ],
+      "directMessages": [
+        { "id": "dm-alice-dev", "name": "Alice Martin", "status": "online" }
+      ],
+      "channelMessages": {
+        "dev-general": [
+          {
+            "id": "dg1",
+            "author": "Alice Martin",
+            "role": "Lead Engineer",
+            "time": "10:00",
+            "content": "Development workspace active. Use this for staging discussions.",
+            "ownership": "their"
+          }
+        ],
+        "dev-builds": []
+      }
+    }
+  ]
+}
