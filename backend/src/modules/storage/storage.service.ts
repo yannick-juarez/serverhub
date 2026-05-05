@@ -1,8 +1,28 @@
-import fs from 'fs/promises';
+/**
+ * Storage service — public API for all modules.
+ *
+ * All persistent data is kept in a SQLite database (storage/app.db).
+ * The JSON file (storage/app-storage.json) from previous versions is
+ * automatically imported on first run and renamed to *.migrated.
+ *
+ * Exported API is unchanged so every consumer module continues to work
+ * without modification.
+ */
+
+import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import bcrypt from 'bcryptjs';
 import { config } from '../../config/env';
+import {
+  getDb,
+  isDbEmpty,
+  readStorageSync,
+  writeStorageSync,
+  STORAGE_DIR,
+} from './db';
+
+// ── Types (re-exported for all consumer modules) ─────────────────────────────
 
 export type StoredDbConnection = {
   db_id: string;
@@ -62,6 +82,11 @@ export type StoredUser = {
   updated_at: string;
 };
 
+export type StoredConversationReadState = {
+  user_id: string;
+  last_read_at: string | null;
+};
+
 export type StoredWorkspaceChannel = {
   channel_id: string;
   workspace_id: string;
@@ -70,11 +95,6 @@ export type StoredWorkspaceChannel = {
   read_state: StoredConversationReadState[];
   created_at: string;
   updated_at: string;
-};
-
-export type StoredConversationReadState = {
-  user_id: string;
-  last_read_at: string | null;
 };
 
 export type StoredDirectConversation = {
@@ -154,8 +174,7 @@ export type StorageData = {
   };
 };
 
-const STORAGE_DIR = path.resolve(process.cwd(), 'storage');
-const STORAGE_FILE = path.join(STORAGE_DIR, 'app-storage.json');
+// ── Seed data (first run) ─────────────────────────────────────────────────────
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -163,7 +182,7 @@ function nowIso(): string {
 
 function defaultStorage(): StorageData {
   const now = nowIso();
-  const defaultWorkspaceId = 'demo';
+  const workspaceId = 'demo';
   const adminPasswordHash = config.admin.password.startsWith('$2')
     ? config.admin.password
     : bcrypt.hashSync(config.admin.password, 10);
@@ -172,7 +191,7 @@ function defaultStorage(): StorageData {
   const ryanUserId = randomUUID();
   const generalChannelId = randomUUID();
   const incidentsChannelId = randomUUID();
-  const directConversationId = randomUUID();
+  const directId = randomUUID();
   const opsGroupId = randomUUID();
 
   return {
@@ -205,22 +224,17 @@ function defaultStorage(): StorageData {
       ],
       ssh: [],
     },
-    requests: {
-      folders: [],
-      items: [],
-    },
+    requests: { folders: [], items: [] },
     preferences: {
       theme: 'dark',
       locale: 'fr',
       filesRoot: config.filesRoot,
-      databasePage: {
-        leftPanelTab: 'tables',
-      },
+      databasePage: { leftPanelTab: 'tables' },
     },
     users: [
       {
         user_id: adminUserId,
-        workspace_id: defaultWorkspaceId,
+        workspace_id: workspaceId,
         username: config.admin.username.trim().toLowerCase(),
         password_hash: adminPasswordHash,
         is_active: true,
@@ -229,7 +243,7 @@ function defaultStorage(): StorageData {
       },
       {
         user_id: sofiaUserId,
-        workspace_id: defaultWorkspaceId,
+        workspace_id: workspaceId,
         username: 'sofia.patel',
         password_hash: bcrypt.hashSync('serverhub', 10),
         is_active: true,
@@ -238,7 +252,7 @@ function defaultStorage(): StorageData {
       },
       {
         user_id: ryanUserId,
-        workspace_id: defaultWorkspaceId,
+        workspace_id: workspaceId,
         username: 'ryan.chen',
         password_hash: bcrypt.hashSync('serverhub', 10),
         is_active: true,
@@ -250,7 +264,7 @@ function defaultStorage(): StorageData {
       channels: [
         {
           channel_id: generalChannelId,
-          workspace_id: defaultWorkspaceId,
+          workspace_id: workspaceId,
           name: 'general',
           description: 'General team communication',
           read_state: [
@@ -263,7 +277,7 @@ function defaultStorage(): StorageData {
         },
         {
           channel_id: incidentsChannelId,
-          workspace_id: defaultWorkspaceId,
+          workspace_id: workspaceId,
           name: 'incidents',
           description: 'Live incident coordination channel',
           read_state: [
@@ -277,8 +291,8 @@ function defaultStorage(): StorageData {
       ],
       directs: [
         {
-          direct_id: directConversationId,
-          workspace_id: defaultWorkspaceId,
+          direct_id: directId,
+          workspace_id: workspaceId,
           participant_user_ids: [adminUserId, sofiaUserId],
           read_state: [
             { user_id: adminUserId, last_read_at: null },
@@ -291,7 +305,7 @@ function defaultStorage(): StorageData {
       groups: [
         {
           group_id: opsGroupId,
-          workspace_id: defaultWorkspaceId,
+          workspace_id: workspaceId,
           name: 'Ops War Room',
           description: 'Shared coordination for infrastructure events',
           member_user_ids: [adminUserId, sofiaUserId, ryanUserId],
@@ -308,7 +322,7 @@ function defaultStorage(): StorageData {
       items: [
         {
           message_id: randomUUID(),
-          workspace_id: defaultWorkspaceId,
+          workspace_id: workspaceId,
           conversation_type: 'channel',
           conversation_id: generalChannelId,
           author_user_id: adminUserId,
@@ -316,10 +330,9 @@ function defaultStorage(): StorageData {
           created_at: now,
           updated_at: now,
         },
-
         {
           message_id: randomUUID(),
-          workspace_id: defaultWorkspaceId,
+          workspace_id: workspaceId,
           conversation_type: 'channel',
           conversation_id: incidentsChannelId,
           author_user_id: adminUserId,
@@ -329,9 +342,9 @@ function defaultStorage(): StorageData {
         },
         {
           message_id: randomUUID(),
-          workspace_id: defaultWorkspaceId,
+          workspace_id: workspaceId,
           conversation_type: 'direct',
-          conversation_id: directConversationId,
+          conversation_id: directId,
           author_user_id: sofiaUserId,
           content: 'Can you review the dashboard alert tuning when you have a minute?',
           created_at: now,
@@ -339,7 +352,7 @@ function defaultStorage(): StorageData {
         },
         {
           message_id: randomUUID(),
-          workspace_id: defaultWorkspaceId,
+          workspace_id: workspaceId,
           conversation_type: 'group',
           conversation_id: opsGroupId,
           author_user_id: ryanUserId,
@@ -373,161 +386,109 @@ function defaultStorage(): StorageData {
   };
 }
 
-async function ensureStorageFile(): Promise<void> {
-  await fs.mkdir(STORAGE_DIR, { recursive: true });
+// ── JSON migration (v1 → SQLite) ─────────────────────────────────────────────
+
+const JSON_FILE = path.join(STORAGE_DIR, 'app-storage.json');
+
+function tryMigrateJson(): StorageData | null {
+  if (!fs.existsSync(JSON_FILE)) return null;
 
   try {
-    await fs.access(STORAGE_FILE);
-  } catch {
-    const seed = defaultStorage();
-    await fs.writeFile(STORAGE_FILE, JSON.stringify(seed, null, 2), 'utf-8');
-  }
-}
+    const raw = fs.readFileSync(JSON_FILE, 'utf-8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
 
-export async function readStorage(): Promise<StorageData> {
-  await ensureStorageFile();
-  const raw = await fs.readFile(STORAGE_FILE, 'utf-8');
+    // Minimal validity check
+    if (!parsed.connections || !parsed.preferences) return null;
 
-  try {
-    const parsed = JSON.parse(raw) as Partial<StorageData>;
+    const data = parsed as unknown as Partial<StorageData>;
 
-    if (!parsed.connections || !parsed.requests || !parsed.preferences) {
-      throw new Error('invalid storage shape');
-    }
-
-    const now = nowIso();
-
-    const normalizedUsers = Array.isArray(parsed.users)
-      ? parsed.users.map((user) => ({
-        ...user,
-        workspace_id: user.workspace_id || 'demo',
-      }))
-      : [];
-
-    const rawMessages = parsed.messages && typeof parsed.messages === 'object'
-      ? parsed.messages as Partial<StorageData['messages']> & { items?: Array<StoredWorkspaceMessage | ({ channel_id?: string } & Record<string, unknown>)> }
-      : null;
-
-    const normalizeReadState = (value: unknown): StoredConversationReadState[] => {
-      if (!Array.isArray(value)) {
-        return [];
-      }
-
-      return value.flatMap((entry) => {
-        if (!entry || typeof entry !== 'object') {
-          return [];
-        }
-
-        const readState = entry as Partial<StoredConversationReadState>;
-        if (!readState.user_id) {
-          return [];
-        }
-
-        return [{
-          user_id: readState.user_id,
-          last_read_at: readState.last_read_at ?? null,
-        }];
+    // Normalise read_state entries
+    const normalizeRS = (arr: unknown): StoredConversationReadState[] => {
+      if (!Array.isArray(arr)) return [];
+      return arr.flatMap((e) => {
+        if (!e || typeof e !== 'object') return [];
+        const entry = e as Partial<StoredConversationReadState>;
+        if (!entry.user_id) return [];
+        return [{ user_id: entry.user_id, last_read_at: entry.last_read_at ?? null }];
       });
     };
 
-    const normalizedMessages = rawMessages
-      ? {
-        channels: Array.isArray(rawMessages.channels)
-          ? rawMessages.channels.map((channel) => ({
-            ...channel,
-            read_state: normalizeReadState((channel as Partial<StoredWorkspaceChannel>).read_state),
-          }))
-          : [],
-        directs: Array.isArray(rawMessages.directs)
-          ? rawMessages.directs.map((direct) => ({
-            ...direct,
-            read_state: normalizeReadState((direct as Partial<StoredDirectConversation>).read_state),
-          }))
-          : [],
-        groups: Array.isArray(rawMessages.groups)
-          ? rawMessages.groups.map((group) => ({
-            ...group,
-            read_state: normalizeReadState((group as Partial<StoredGroupConversation>).read_state),
-          }))
-          : [],
-        items: Array.isArray(rawMessages.items)
-          ? rawMessages.items.flatMap((item) => {
-            if (!item || typeof item !== 'object') {
-              return [];
-            }
-
-            const nextItem = item as Partial<StoredWorkspaceMessage> & { channel_id?: string };
-            const conversationType = nextItem.conversation_type;
-            const conversationId = nextItem.conversation_id ?? nextItem.channel_id;
-
-            if (!conversationType && !nextItem.channel_id) {
-              return [];
-            }
-
-            if (!conversationId || !nextItem.author_user_id || !nextItem.content || !nextItem.message_id || !nextItem.workspace_id || !nextItem.created_at || !nextItem.updated_at) {
-              return [];
-            }
-
-            return [{
-              message_id: nextItem.message_id,
-              workspace_id: nextItem.workspace_id,
-              conversation_type: conversationType ?? 'channel',
-              conversation_id: conversationId,
-              author_user_id: nextItem.author_user_id,
-              content: nextItem.content,
-              created_at: nextItem.created_at,
-              updated_at: nextItem.updated_at,
-            }];
-          })
-          : [],
-      }
-      : {
-        channels: [],
-        directs: [],
-        groups: [],
-        items: [],
-      };
-    const next: StorageData = {
-      connections: parsed.connections,
-      requests: parsed.requests,
-      preferences: {
-        filesRoot: config.filesRoot,
-        ...(parsed.preferences as PlatformPreferences),
-      },
-      users: normalizedUsers,
-      messages: normalizedMessages,
-      calendar: parsed.calendar && Array.isArray(parsed.calendar.calendars) && Array.isArray(parsed.calendar.events)
-        ? parsed.calendar
-        : { calendars: [], events: [] },
+    const raw_messages = data.messages;
+    const messages: StorageData['messages'] = {
+      channels: (raw_messages?.channels ?? []).map((ch) => ({
+        ...ch,
+        read_state: normalizeRS(ch.read_state),
+      })),
+      directs: (raw_messages?.directs ?? []).map((d) => ({
+        ...d,
+        read_state: normalizeRS(d.read_state),
+      })),
+      groups: (raw_messages?.groups ?? []).map((g) => ({
+        ...g,
+        read_state: normalizeRS(g.read_state),
+      })),
+      items: (raw_messages?.items ?? []).flatMap((item) => {
+        const m = item as Partial<StoredWorkspaceMessage> & { channel_id?: string };
+        const conversationId = m.conversation_id ?? m.channel_id;
+        if (!m.message_id || !m.workspace_id || !m.author_user_id || !m.content || !conversationId) return [];
+        return [{
+          message_id: m.message_id,
+          workspace_id: m.workspace_id,
+          conversation_type: m.conversation_type ?? 'channel',
+          conversation_id: conversationId,
+          author_user_id: m.author_user_id,
+          content: m.content,
+          created_at: m.created_at ?? nowIso(),
+          updated_at: m.updated_at ?? nowIso(),
+        }];
+      }),
     };
 
-    if (
-      !Array.isArray(parsed.users)
-      || !(parsed.preferences as PlatformPreferences).filesRoot
-      || !parsed.messages
-      || !Array.isArray((parsed.messages as Partial<StorageData['messages']>).directs)
-      || !Array.isArray((parsed.messages as Partial<StorageData['messages']>).groups)
-      || normalizedMessages.channels.some((channel) => !Array.isArray(channel.read_state))
-      || normalizedMessages.directs.some((direct) => !Array.isArray(direct.read_state))
-      || normalizedMessages.groups.some((group) => !Array.isArray(group.read_state))
-      || (Array.isArray(rawMessages?.items) && rawMessages?.items.some((item) => item && typeof item === 'object' && 'channel_id' in item && !('conversation_id' in item)))
-      || !parsed.calendar
-      || !Array.isArray((parsed.calendar as Partial<StorageData['calendar']>).calendars)
-    ) {
-      await writeStorage(next);
-    }
+    const normalized: StorageData = {
+      connections: data.connections ?? { db: [], ssh: [] },
+      requests: data.requests ?? { folders: [], items: [] },
+      preferences: {
+        filesRoot: config.filesRoot,
+        ...(data.preferences as PlatformPreferences),
+      },
+      users: (data.users ?? []).map((u) => ({
+        ...u,
+        workspace_id: u.workspace_id || 'demo',
+      })),
+      messages,
+      calendar: data.calendar ?? { calendars: [], events: [] },
+    };
 
-    return next;
-  } catch {
-    const seed = defaultStorage();
-    await writeStorage(seed);
-    return seed;
+    // Archive the JSON file so it's never imported again
+    fs.renameSync(JSON_FILE, JSON_FILE + '.migrated');
+    console.log('[storage] Migrated app-storage.json → SQLite (storage/app.db)');
+
+    return normalized;
+  } catch (err) {
+    console.warn('[storage] JSON migration failed, using fresh seed:', err);
+    return null;
   }
 }
 
+// ── Ensure DB is seeded ───────────────────────────────────────────────────────
+
+function ensureSeed(): void {
+  const db = getDb();
+  if (!isDbEmpty(db)) return;
+
+  const migrated = tryMigrateJson();
+  writeStorageSync(db, migrated ?? defaultStorage());
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+export async function readStorage(): Promise<StorageData> {
+  ensureSeed();
+  return readStorageSync(getDb());
+}
+
 export async function writeStorage(next: StorageData): Promise<void> {
-  await fs.mkdir(STORAGE_DIR, { recursive: true });
-  await fs.writeFile(STORAGE_FILE, JSON.stringify(next, null, 2), 'utf-8');
+  writeStorageSync(getDb(), next);
 }
 
 export async function updateStorage(

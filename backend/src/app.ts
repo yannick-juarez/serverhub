@@ -3,6 +3,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
+import path from 'path';
+import fs from 'fs';
 import { config } from './config/env';
 import { router } from './routes';
 import { errorHandler } from './middleware/errorHandler';
@@ -56,6 +58,16 @@ app.use('/api', router);
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', ts: new Date().toISOString() });
 });
+
+// ─── Serve built frontend (production standalone mode) ────────────────────────
+const frontendDist = path.resolve(__dirname, '../../frontend/dist');
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  // SPA fallback — toutes les routes non-API renvoient index.html
+  app.get(/^(?!\/api\/).*/, (_req, res) => {
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+}
 
 // ─── Error handler ───────────────────────────────────────────────────────────
 app.use(errorHandler);

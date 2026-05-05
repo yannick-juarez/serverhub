@@ -1,0 +1,24 @@
+# ── Storage (generated at runtime — never commit prod data) ──────────────────
+backend/storage/app.db
+backend/storage/app.db-shm
+backend/storage/app.db-wal
+backend/storage/app-storage.json
+backend/storage/app-storage.json.migrated
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+backend/.env
+.env
+
+# ── Build outputs ─────────────────────────────────────────────────────────────
+backend/dist/
+frontend/dist/
+
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+*.suo
+*.sw?
