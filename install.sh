@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # ServerHub — Standalone installation script
-# Usage: sudo bash install.sh
+# Usage : sudo bash install.sh
 #
 # REQUIRED dependencies on the host server:
 #   - Node.js >= 22  (the script can install it via NodeSource if missing)
 #   - npm            (bundled with Node.js)
-#   - openssl        (for secret generation, available on most Linux distros)
+#   - openssl        (used to generate secrets, available on most Linux distros)
 #
 # NOT required on the host server:
-#   - MySQL / PostgreSQL: ServerHub is a CLIENT that connects remotely
+#   - MySQL / PostgreSQL: ServerHub is a CLIENT that connects to them remotely
 #     (like phpMyAdmin). No local DB server is required.
 #   - rsync, apache, nginx, php: none
 # ─────────────────────────────────────────────────────────────────────────────
@@ -37,11 +37,11 @@ require_healthy_dpkg() {
   audit_output="$(dpkg --audit 2>/dev/null || true)"
   if [[ -n "${audit_output//[[:space:]]/}" ]]; then
     echo "The Debian package manager is blocked by unconfigured packages."
-    echo "Fix this state first, then run the script again."
+    echo "Fix this state first, then rerun the script."
     echo ""
     echo "$audit_output"
     echo ""
-    echo "Recommended command: sudo dpkg --configure -a"
+    echo "Suggested command: sudo dpkg --configure -a"
     exit 1
   fi
 }
@@ -81,7 +81,7 @@ install_node_binary() {
       ;;
     *)
       echo "Unsupported architecture for automatic Node.js installation: $arch"
-      echo "Install Node.js ${NODE_MIN_VERSION}+ manually, then run the script again."
+      echo "Install Node.js ${NODE_MIN_VERSION}+ manually, then rerun the script."
       exit 1
       ;;
   esac
@@ -91,7 +91,7 @@ install_node_binary() {
   install_root="/usr/local/lib/nodejs"
   extracted_dir="${install_root}/node-v${NODE_DISTRO_VERSION}-linux-${node_arch}"
 
-  echo "→ Installing Node.js ${NODE_DISTRO_VERSION} from official binaries..."
+  echo "→ Installing Node.js ${NODE_DISTRO_VERSION} from the official binaries..."
   mkdir -p "$install_root"
   rm -rf "$extracted_dir"
 
@@ -100,7 +100,7 @@ install_node_binary() {
   elif command -v wget &>/dev/null; then
     wget -qO- "$download_url" | tar -xJ -C "$install_root"
   else
-    echo "curl and wget are missing. Install Node.js ${NODE_MIN_VERSION}+ manually."
+    echo "curl and wget are both unavailable. Install Node.js ${NODE_MIN_VERSION}+ manually."
     exit 1
   fi
 
@@ -117,13 +117,13 @@ install_node_binary() {
   fi
 }
 
-# ── Pre-flight checks ────────────────────────────────────────────────────────
+# ── Preflight checks ─────────────────────────────────────────────────────────
 if [[ $EUID -ne 0 ]]; then
   echo "This script must be run as root (sudo bash install.sh)"
   exit 1
 fi
 
-# ── Node.js: automatic install if missing or too old ────────────────────────
+# ── Node.js: install automatically if missing or too old ─────────────────────
 install_node() {
   if ! can_use_apt; then
     install_node_binary
@@ -136,7 +136,7 @@ install_node() {
   elif command -v wget &>/dev/null; then
     wget -qO- "https://deb.nodesource.com/setup_${NODE_MIN_VERSION}.x" | bash -
   else
-    echo "curl and wget are missing. Install Node.js ${NODE_MIN_VERSION}+ manually."
+    echo "curl and wget are both unavailable. Install Node.js ${NODE_MIN_VERSION}+ manually."
     exit 1
   fi
   apt-get install -y nodejs
@@ -145,7 +145,7 @@ install_node() {
   installed_node_version="$(get_node_major_version || true)"
   if [[ -z "$installed_node_version" || "$installed_node_version" -lt "$NODE_MIN_VERSION" ]]; then
     echo "Failed to install Node.js ${NODE_MIN_VERSION}+ (detected version: ${installed_node_version:-missing})."
-    echo "Check that the NodeSource repository is configured correctly, then run the script again."
+    echo "Check that the NodeSource repository is configured correctly, then rerun the script."
     exit 1
   fi
 }
@@ -154,7 +154,7 @@ if ! command -v node &>/dev/null; then
   if command -v apt-get &>/dev/null || command -v curl &>/dev/null || command -v wget &>/dev/null; then
     install_node
   else
-    echo "Node.js not found. Install Node.js >= ${NODE_MIN_VERSION}, then run again."
+    echo "Node.js not found. Install Node.js >= ${NODE_MIN_VERSION}, then rerun the script."
     exit 1
   fi
 fi
@@ -165,7 +165,7 @@ if [[ "$NODE_VERSION" -lt "$NODE_MIN_VERSION" ]]; then
   if command -v apt-get &>/dev/null || command -v curl &>/dev/null || command -v wget &>/dev/null; then
     install_node
   else
-    echo "Update Node.js manually, then run again."
+    echo "Upgrade Node.js manually, then rerun the script."
     exit 1
   fi
 fi
@@ -175,7 +175,7 @@ if ! command -v openssl &>/dev/null; then
   if require_apt_ready; then
     apt-get install -y openssl
   else
-    echo "openssl not found. Install it, then run again."
+    echo "openssl not found. Install it, then rerun the script."
     exit 1
   fi
 fi
@@ -191,12 +191,12 @@ command -v g++     &>/dev/null || need_build_tools=1
 
 if [[ $need_build_tools -eq 1 ]]; then
   if require_apt_ready; then
-    echo "→ Installing build tools (python3, make, g++ - required by the native SQLite module)..."
+    echo "→ Installing build tools (python3, make, g++ — required by the native SQLite module)..."
     apt-get install -y python3 make g++ &>/dev/null
     echo "✓ Build tools installed"
   else
     echo "Warning: python3, make and g++ are required to compile the native SQLite module."
-    echo "Install build-essential (or equivalent), then run the script again."
+    echo "Install build-essential (or equivalent), then rerun the script."
     echo "Press Enter to continue, or Ctrl+C to cancel."
     read -r
   fi
@@ -205,7 +205,7 @@ else
 fi
 if ! curl -fsSL --max-time 5 https://registry.npmjs.org/ &>/dev/null \
   && ! wget -q --timeout=5 --spider https://registry.npmjs.org/ &>/dev/null; then
-  echo "Warning: cannot reach registry.npmjs.org. npm install may fail."
+  echo "Warning: registry.npmjs.org is unreachable. npm install may fail."
   echo "Press Ctrl+C to cancel, or Enter to continue anyway."
   read -r
 fi
@@ -214,7 +214,7 @@ fi
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 
 if [[ ! -d "$SCRIPT_DIR/backend" || ! -d "$SCRIPT_DIR/frontend" ]]; then
-  echo "ServerHub sources were not found next to this script."
+  echo "ServerHub sources not found next to the script."
   echo "This script must be placed and run from the project root containing:"
   echo "  - backend/"
   echo "  - frontend/"
@@ -245,15 +245,15 @@ find . \
     done
 
 # ── Install dependencies ─────────────────────────────────────────────────────
-echo "→ Installing backend dependencies..."
+echo "→ Installing backend dependencies (including build tools)..."
 cd "$APP_DIR/backend"
-npm install --omit=dev
+npm install
 
 echo "→ Installing frontend dependencies..."
 cd "$APP_DIR/frontend"
 npm install
 
-# ── Build ─────────────────────────────────────────────────────────────────────
+# ── Build ────────────────────────────────────────────────────────────────────
 echo "→ Building frontend..."
 cd "$APP_DIR/frontend"
 npm run build
@@ -261,6 +261,10 @@ npm run build
 echo "→ Building backend..."
 cd "$APP_DIR/backend"
 npm run build
+
+echo "→ Pruning backend development dependencies..."
+cd "$APP_DIR/backend"
+npm prune --omit=dev
 
 # ── .env file ────────────────────────────────────────────────────────────────
 ENV_FILE="$APP_DIR/backend/.env"
@@ -276,16 +280,16 @@ JWT_SECRET=$(openssl rand -hex 32)
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=${GENERATED_PASS}
 
-# Leave empty in standalone mode (frontend is served by the same process)
+# Leave empty in standalone mode (the frontend is served by the same process)
 CORS_ORIGINS=
 
-# MySQL - optional, ServerHub connects on demand (no local server required)
+# MySQL — optional, ServerHub connects to it on demand (no local server required)
 # MYSQL_HOST=127.0.0.1
 # MYSQL_PORT=3306
 # MYSQL_USER=root
 # MYSQL_PASSWORD=
 
-# PostgreSQL - same behavior
+# PostgreSQL — same idea
 # PG_HOST=127.0.0.1
 # PG_PORT=5432
 # PG_USER=postgres
@@ -296,8 +300,8 @@ EOF
 
   echo ""
   echo "  ╔══════════════════════════════════════════╗"
-  echo "  ║  Credentials generated automatically      ║"
-  echo "  ║  Login: admin                             ║"
+  echo "  ║  Credentials generated automatically     ║"
+  echo "  ║  Login: admin                            ║"
   echo "  ║  Password: ${GENERATED_PASS}  ║"
   echo "  ╚══════════════════════════════════════════╝"
   echo "  Full config: ${ENV_FILE}"
@@ -345,4 +349,3 @@ echo "    systemctl status ${SERVICE_NAME}           # service status"
 echo "    systemctl restart ${SERVICE_NAME}          # restart"
 echo "    bash ${APP_DIR}/update.sh                 # update"
 echo ""
-

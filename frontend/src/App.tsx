@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import Login from "./pages/Login";
 import ProtectedRoute from "./components/ProtectedRoute";
 import { apps } from "./apps/index";
@@ -31,6 +31,14 @@ function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <Navigate to="/settings" replace />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/applications"
         element={
@@ -66,6 +74,7 @@ function App() {
       {appRoutes.map((appRoute) => (
         <Route key={appRoute.key} path={appRoute.path} element={appRoute.element} />
       ))}
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
