@@ -1,75 +1,186 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# ServerHub — Script d'installation standalone
-# Usage : sudo bash install.sh
+# ServerHub — Standalone installation script
+# Usage: sudo bash install.sh
 #
-# Dépendances REQUISES sur le serveur hôte :
-#   - Node.js >= 18  (le script peut l'installer via NodeSource si absent)
-#   - npm            (fourni avec Node.js)
-#   - openssl        (génération des secrets, présent sur toute distrib Linux)
+# REQUIRED dependencies on the host server:
+#   - Node.js >= 22  (the script can install it via NodeSource if missing)
+#   - npm            (bundled with Node.js)
+#   - openssl        (for secret generation, available on most Linux distros)
 #
-# Dépendances NON requises sur le serveur hôte :
-#   - MySQL / PostgreSQL : ServerHub est un CLIENT qui s'y connecte à distance
-#     (comme phpMyAdmin). Aucun serveur DB local n'est nécessaire.
-#   - rsync, apache, nginx, php : aucun
+# NOT required on the host server:
+#   - MySQL / PostgreSQL: ServerHub is a CLIENT that connects remotely
+#     (like phpMyAdmin). No local DB server is required.
+#   - rsync, apache, nginx, php: none
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 APP_DIR="/opt/serverhub"
 SERVICE_NAME="serverhub"
-NODE_MIN_VERSION=18
+NODE_MIN_VERSION=22
+NODE_DISTRO_VERSION="22.16.0"
 
-# ── Vérifications préalables ─────────────────────────────────────────────────
+get_node_major_version() {
+  if ! command -v node &>/dev/null; then
+    return 1
+  fi
+
+  node -e "process.stdout.write(process.versions.node.split('.')[0])"
+}
+
+require_healthy_dpkg() {
+  if ! command -v dpkg &>/dev/null; then
+    return 0
+  fi
+
+  local audit_output
+  audit_output="$(dpkg --audit 2>/dev/null || true)"
+  if [[ -n "${audit_output//[[:space:]]/}" ]]; then
+    echo "The Debian package manager is blocked by unconfigured packages."
+    echo "Fix this state first, then run the script again."
+    echo ""
+    echo "$audit_output"
+    echo ""
+    echo "Recommended command: sudo dpkg --configure -a"
+    exit 1
+  fi
+}
+
+require_apt_ready() {
+  if ! command -v apt-get &>/dev/null; then
+    return 1
+  fi
+
+  require_healthy_dpkg
+}
+
+can_use_apt() {
+  if ! command -v apt-get &>/dev/null; then
+    return 1
+  fi
+
+  if ! command -v dpkg &>/dev/null; then
+    return 0
+  fi
+
+  local audit_output
+  audit_output="$(dpkg --audit 2>/dev/null || true)"
+  [[ -z "${audit_output//[[:space:]]/}" ]]
+}
+
+install_node_binary() {
+  local arch node_arch archive_name download_url install_root extracted_dir
+
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64)
+      node_arch="x64"
+      ;;
+    aarch64)
+      node_arch="arm64"
+      ;;
+    *)
+      echo "Unsupported architecture for automatic Node.js installation: $arch"
+      echo "Install Node.js ${NODE_MIN_VERSION}+ manually, then run the script again."
+      exit 1
+      ;;
+  esac
+
+  archive_name="node-v${NODE_DISTRO_VERSION}-linux-${node_arch}.tar.xz"
+  download_url="https://nodejs.org/dist/v${NODE_DISTRO_VERSION}/${archive_name}"
+  install_root="/usr/local/lib/nodejs"
+  extracted_dir="${install_root}/node-v${NODE_DISTRO_VERSION}-linux-${node_arch}"
+
+  echo "→ Installing Node.js ${NODE_DISTRO_VERSION} from official binaries..."
+  mkdir -p "$install_root"
+  rm -rf "$extracted_dir"
+
+  if command -v curl &>/dev/null; then
+    curl -fsSL "$download_url" | tar -xJ -C "$install_root"
+  elif command -v wget &>/dev/null; then
+    wget -qO- "$download_url" | tar -xJ -C "$install_root"
+  else
+    echo "curl and wget are missing. Install Node.js ${NODE_MIN_VERSION}+ manually."
+    exit 1
+  fi
+
+  ln -sfn "${extracted_dir}/bin/node" /usr/local/bin/node
+  ln -sfn "${extracted_dir}/bin/npm" /usr/local/bin/npm
+  ln -sfn "${extracted_dir}/bin/npx" /usr/local/bin/npx
+  ln -sfn "${extracted_dir}/bin/corepack" /usr/local/bin/corepack
+
+  local installed_node_version
+  installed_node_version="$(get_node_major_version || true)"
+  if [[ -z "$installed_node_version" || "$installed_node_version" -lt "$NODE_MIN_VERSION" ]]; then
+    echo "Failed to install Node.js ${NODE_MIN_VERSION}+ (detected version: ${installed_node_version:-missing})."
+    exit 1
+  fi
+}
+
+# ── Pre-flight checks ────────────────────────────────────────────────────────
 if [[ $EUID -ne 0 ]]; then
-  echo "Ce script doit être exécuté en tant que root (sudo bash install.sh)"
+  echo "This script must be run as root (sudo bash install.sh)"
   exit 1
 fi
 
-# ── Node.js : installation automatique si absent ou trop ancien ───────────────
+# ── Node.js: automatic install if missing or too old ────────────────────────
 install_node() {
-  echo "→ Installation de Node.js ${NODE_MIN_VERSION} via NodeSource..."
+  if ! can_use_apt; then
+    install_node_binary
+    return
+  fi
+
+  echo "→ Installing Node.js ${NODE_MIN_VERSION} via NodeSource..."
   if command -v curl &>/dev/null; then
     curl -fsSL "https://deb.nodesource.com/setup_${NODE_MIN_VERSION}.x" | bash -
   elif command -v wget &>/dev/null; then
     wget -qO- "https://deb.nodesource.com/setup_${NODE_MIN_VERSION}.x" | bash -
   else
-    echo "curl et wget sont introuvables. Installez Node.js ${NODE_MIN_VERSION}+ manuellement."
+    echo "curl and wget are missing. Install Node.js ${NODE_MIN_VERSION}+ manually."
     exit 1
   fi
   apt-get install -y nodejs
+
+  local installed_node_version
+  installed_node_version="$(get_node_major_version || true)"
+  if [[ -z "$installed_node_version" || "$installed_node_version" -lt "$NODE_MIN_VERSION" ]]; then
+    echo "Failed to install Node.js ${NODE_MIN_VERSION}+ (detected version: ${installed_node_version:-missing})."
+    echo "Check that the NodeSource repository is configured correctly, then run the script again."
+    exit 1
+  fi
 }
 
 if ! command -v node &>/dev/null; then
-  if command -v apt-get &>/dev/null; then
+  if command -v apt-get &>/dev/null || command -v curl &>/dev/null || command -v wget &>/dev/null; then
     install_node
   else
-    echo "Node.js introuvable. Installez Node.js >= ${NODE_MIN_VERSION} puis relancez."
+    echo "Node.js not found. Install Node.js >= ${NODE_MIN_VERSION}, then run again."
     exit 1
   fi
 fi
 
-NODE_VERSION=$(node -e "process.stdout.write(process.versions.node.split('.')[0])")
+NODE_VERSION="$(get_node_major_version)"
 if [[ "$NODE_VERSION" -lt "$NODE_MIN_VERSION" ]]; then
-  echo "Node.js ${NODE_MIN_VERSION}+ requis (trouvé : $NODE_VERSION)"
-  if command -v apt-get &>/dev/null; then
+  echo "Node.js ${NODE_MIN_VERSION}+ required (found: $NODE_VERSION)"
+  if command -v apt-get &>/dev/null || command -v curl &>/dev/null || command -v wget &>/dev/null; then
     install_node
   else
-    echo "Mettez à jour Node.js manuellement puis relancez."
+    echo "Update Node.js manually, then run again."
     exit 1
   fi
 fi
 
-# ── openssl (génération des secrets) ─────────────────────────────────────────
+# ── openssl (secret generation) ──────────────────────────────────────────────
 if ! command -v openssl &>/dev/null; then
-  if command -v apt-get &>/dev/null; then
+  if require_apt_ready; then
     apt-get install -y openssl
   else
-    echo "openssl introuvable. Installez-le puis relancez."
+    echo "openssl not found. Install it, then run again."
     exit 1
   fi
 fi
 
-# ── Accès internet pour npm ───────────────────────────────────────────────────
+# ── Internet access for npm ──────────────────────────────────────────────────
 
 # -- Build tools (required by better-sqlite3 native addon) --------------------
 # better-sqlite3 compiles a C++ extension during npm install.
@@ -79,29 +190,39 @@ command -v make    &>/dev/null || need_build_tools=1
 command -v g++     &>/dev/null || need_build_tools=1
 
 if [[ $need_build_tools -eq 1 ]]; then
-  if command -v apt-get &>/dev/null; then
-    step "Installing build tools (python3, make, g++ — required by SQLite native module)..."
+  if require_apt_ready; then
+    echo "→ Installing build tools (python3, make, g++ - required by the native SQLite module)..."
     apt-get install -y python3 make g++ &>/dev/null
-    ok "Build tools installed"
+    echo "✓ Build tools installed"
   else
-    warn "python3, make and g++ are required to compile the SQLite native module."
-    warn "Install build-essential (or equivalent) then re-run."
-    echo -e "  ${DIM}  Press ${BOLD}Enter${RESET}${DIM} to continue, or ${BOLD}Ctrl+C${RESET}${DIM} to abort.${RESET}"
+    echo "Warning: python3, make and g++ are required to compile the native SQLite module."
+    echo "Install build-essential (or equivalent), then run the script again."
+    echo "Press Enter to continue, or Ctrl+C to cancel."
     read -r
   fi
 else
-  ok "Build tools detected (python3 / make / g++)"
+  echo "✓ Build tools detected (python3 / make / g++)"
 fi
 if ! curl -fsSL --max-time 5 https://registry.npmjs.org/ &>/dev/null \
   && ! wget -q --timeout=5 --spider https://registry.npmjs.org/ &>/dev/null; then
-  echo "Attention : accès à registry.npmjs.org impossible. npm install risque d'échouer."
-  echo "Appuyez sur Ctrl+C pour annuler, ou Entrée pour continuer quand même."
+  echo "Warning: cannot reach registry.npmjs.org. npm install may fail."
+  echo "Press Ctrl+C to cancel, or Enter to continue anyway."
   read -r
 fi
 
-# ── Copie des sources ─────────────────────────────────────────────────────────
+# ── Copy sources ─────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
-echo "→ Copie des fichiers dans ${APP_DIR}..."
+
+if [[ ! -d "$SCRIPT_DIR/backend" || ! -d "$SCRIPT_DIR/frontend" ]]; then
+  echo "ServerHub sources were not found next to this script."
+  echo "This script must be placed and run from the project root containing:"
+  echo "  - backend/"
+  echo "  - frontend/"
+  echo "Detected path: $SCRIPT_DIR"
+  exit 1
+fi
+
+echo "→ Copying files to ${APP_DIR}..."
 mkdir -p "$APP_DIR"
 
 # Exclude dev artifacts, secrets and local storage data from the copy
@@ -123,48 +244,48 @@ find . \
       fi
     done
 
-# ── Installation des dépendances ──────────────────────────────────────────────
-echo "→ Installation des dépendances backend..."
+# ── Install dependencies ─────────────────────────────────────────────────────
+echo "→ Installing backend dependencies..."
 cd "$APP_DIR/backend"
 npm install --omit=dev
 
-echo "→ Installation des dépendances frontend..."
+echo "→ Installing frontend dependencies..."
 cd "$APP_DIR/frontend"
 npm install
 
 # ── Build ─────────────────────────────────────────────────────────────────────
-echo "→ Build du frontend..."
+echo "→ Building frontend..."
 cd "$APP_DIR/frontend"
 npm run build
 
-echo "→ Build du backend..."
+echo "→ Building backend..."
 cd "$APP_DIR/backend"
 npm run build
 
-# ── Fichier .env ──────────────────────────────────────────────────────────────
+# ── .env file ────────────────────────────────────────────────────────────────
 ENV_FILE="$APP_DIR/backend/.env"
 if [[ ! -f "$ENV_FILE" ]]; then
   GENERATED_PASS=$(openssl rand -hex 12)
-  echo "→ Création du fichier .env..."
+  echo "→ Creating .env file..."
   cat > "$ENV_FILE" <<EOF
 NODE_ENV=production
 PORT=8080
 
-# !! Modifiez ces valeurs avant d'exposer ServerHub sur internet !!
+# !! Change these values before exposing ServerHub to the internet !!
 JWT_SECRET=$(openssl rand -hex 32)
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=${GENERATED_PASS}
 
-# Laissez vide en standalone (le frontend est servi par le même processus)
+# Leave empty in standalone mode (frontend is served by the same process)
 CORS_ORIGINS=
 
-# MySQL — optionnel, ServerHub s'y connecte à la demande (pas de serveur local requis)
+# MySQL - optional, ServerHub connects on demand (no local server required)
 # MYSQL_HOST=127.0.0.1
 # MYSQL_PORT=3306
 # MYSQL_USER=root
 # MYSQL_PASSWORD=
 
-# PostgreSQL — idem
+# PostgreSQL - same behavior
 # PG_HOST=127.0.0.1
 # PG_PORT=5432
 # PG_USER=postgres
@@ -175,16 +296,16 @@ EOF
 
   echo ""
   echo "  ╔══════════════════════════════════════════╗"
-  echo "  ║  Identifiants générés automatiquement    ║"
-  echo "  ║  Login : admin                           ║"
-  echo "  ║  Mot de passe : ${GENERATED_PASS}  ║"
+  echo "  ║  Credentials generated automatically      ║"
+  echo "  ║  Login: admin                             ║"
+  echo "  ║  Password: ${GENERATED_PASS}  ║"
   echo "  ╚══════════════════════════════════════════╝"
-  echo "  Config complète : ${ENV_FILE}"
+  echo "  Full config: ${ENV_FILE}"
   echo ""
 fi
 
-# ── Service systemd ───────────────────────────────────────────────────────────
-echo "→ Création du service systemd (démarrage automatique au boot)..."
+# ── systemd service ──────────────────────────────────────────────────────────
+echo "→ Creating systemd service (auto-start on boot)..."
 cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
 [Unit]
 Description=ServerHub — Server Management Panel
@@ -210,18 +331,18 @@ systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
 systemctl restart "$SERVICE_NAME"
 
-# ── Résultat ──────────────────────────────────────────────────────────────────
+# ── Result ───────────────────────────────────────────────────────────────────
 PORT=$(grep "^PORT=" "$ENV_FILE" | cut -d= -f2 || echo "8080")
 SERVER_IP=$(hostname -I | awk '{print $1}')
 echo ""
-echo "✓ ServerHub installé et démarré."
+echo "✓ ServerHub installed and started."
 echo ""
 echo "  → http://${SERVER_IP}:${PORT}"
 echo ""
-echo "  Commandes utiles :"
-echo "    journalctl -u ${SERVICE_NAME} -f          # logs en temps réel"
-echo "    systemctl status ${SERVICE_NAME}           # état du service"
-echo "    systemctl restart ${SERVICE_NAME}          # redémarrer"
-echo "    bash ${APP_DIR}/update.sh                 # mettre à jour"
+echo "  Useful commands:"
+echo "    journalctl -u ${SERVICE_NAME} -f          # live logs"
+echo "    systemctl status ${SERVICE_NAME}           # service status"
+echo "    systemctl restart ${SERVICE_NAME}          # restart"
+echo "    bash ${APP_DIR}/update.sh                 # update"
 echo ""
 
