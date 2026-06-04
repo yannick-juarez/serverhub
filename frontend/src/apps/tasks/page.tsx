@@ -27,6 +27,10 @@ function emptyToDefault(value: string): string {
   return trimmed.length > 0 ? trimmed : "-";
 }
 
+function isManagedJob(job: CronJob): boolean {
+  return job.managed !== false;
+}
+
 export default function TasksPage() {
   useDocumentTitle("TASKS - CRON MANAGER");
 
@@ -102,6 +106,11 @@ export default function TasksPage() {
   };
 
   const startEdit = (job: CronJob) => {
+    if (!isManagedJob(job)) {
+      setError("External crontab entries are read-only in this panel.");
+      return;
+    }
+
     setForm({
       name: job.name,
       schedule: job.schedule,
@@ -114,6 +123,11 @@ export default function TasksPage() {
   };
 
   const handleDelete = async (job: CronJob) => {
+    if (!isManagedJob(job)) {
+      setError("External crontab entries are read-only in this panel.");
+      return;
+    }
+
     if (!window.confirm(`Delete cron task "${job.name}"?`)) {
       return;
     }
@@ -134,6 +148,11 @@ export default function TasksPage() {
   };
 
   const toggleJob = async (job: CronJob) => {
+    if (!isManagedJob(job)) {
+      setError("External crontab entries are read-only in this panel.");
+      return;
+    }
+
     setError(null);
     setMessage(null);
 
@@ -255,6 +274,9 @@ export default function TasksPage() {
             {!loading && sortedJobs.length > 0 ? (
               <div className="mt-4 flex flex-col gap-2">
                 {sortedJobs.map((job) => (
+                  (() => {
+                    const managed = isManagedJob(job);
+                    return (
                   <article
                     key={job.id}
                     className="rounded-lg border border-white/10 bg-black/30 p-3"
@@ -270,6 +292,11 @@ export default function TasksPage() {
                           >
                             {job.enabled ? "Enabled" : "Disabled"}
                           </span>
+                          {!managed ? (
+                            <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
+                              External (read-only)
+                            </span>
+                          ) : null}
                         </div>
                         <p className="mt-2 font-mono text-xs text-amber-200">{emptyToDefault(job.schedule)}</p>
                         <p className="mt-1 break-all font-mono text-xs text-slate-300">{emptyToDefault(job.command)}</p>
@@ -278,30 +305,38 @@ export default function TasksPage() {
 
                       <div className="flex flex-wrap items-center gap-2">
                         <button
-                          className="rounded-md border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-white/10"
+                          className="rounded-md border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
                           onClick={() => {
                             void toggleJob(job);
                           }}
+                          disabled={!managed}
+                          title={!managed ? "External entries are read-only" : undefined}
                         >
                           {job.enabled ? "Disable" : "Enable"}
                         </button>
                         <button
-                          className="rounded-md border border-blue-300/20 bg-blue-500/10 px-2.5 py-1.5 text-xs text-blue-200 hover:bg-blue-500/20"
+                          className="rounded-md border border-blue-300/20 bg-blue-500/10 px-2.5 py-1.5 text-xs text-blue-200 hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                           onClick={() => startEdit(job)}
+                          disabled={!managed}
+                          title={!managed ? "External entries are read-only" : undefined}
                         >
                           Edit
                         </button>
                         <button
-                          className="rounded-md border border-red-300/20 bg-red-500/10 px-2.5 py-1.5 text-xs text-red-200 hover:bg-red-500/20"
+                          className="rounded-md border border-red-300/20 bg-red-500/10 px-2.5 py-1.5 text-xs text-red-200 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                           onClick={() => {
                             void handleDelete(job);
                           }}
+                          disabled={!managed}
+                          title={!managed ? "External entries are read-only" : undefined}
                         >
                           Delete
                         </button>
                       </div>
                     </div>
                   </article>
+                    );
+                  })()
                 ))}
               </div>
             ) : null}

@@ -29,6 +29,7 @@ export interface CronJob {
   schedule: string;
   command: string;
   enabled: boolean;
+  managed?: boolean;
   lastRun?: string;
   nextRun?: string;
 }

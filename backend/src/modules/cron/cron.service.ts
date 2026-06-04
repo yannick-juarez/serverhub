@@ -1,4 +1,5 @@
 import { spawn, execFile } from 'child_process';
+import { createHash } from 'crypto';
 import cron from 'node-cron';
 import { v4 as uuid } from 'uuid';
 import type { CronJob } from '../../types';
@@ -9,6 +10,63 @@ const ALLOWED_MACROS = new Set(['@reboot', '@yearly', '@annually', '@monthly', '
 type CrontabEntry =
   | { kind: 'raw'; raw: string }
   | { kind: 'managed'; job: CronJob };
+
+function isValidSchedule(schedule: string): boolean {
+  if (schedule.startsWith('@')) {
+    return ALLOWED_MACROS.has(schedule.toLowerCase());
+  }
+  return cron.validate(schedule);
+}
+
+function parseExternalJobFromRawLine(rawLine: string, index: number): CronJob | null {
+  let workingLine = rawLine.trim();
+  if (!workingLine.length) {
+    return null;
+  }
+
+  let enabled = true;
+  if (workingLine.startsWith('#')) {
+    enabled = false;
+    workingLine = workingLine.replace(/^#\s*/, '');
+  }
+
+  if (!workingLine.length || workingLine.includes(MANAGED_MARKER)) {
+    return null;
+  }
+
+  let schedule = '';
+  let command = '';
+
+  if (workingLine.startsWith('@')) {
+    const parts = workingLine.split(/\s+/);
+    schedule = parts[0] ?? '';
+    command = parts.slice(1).join(' ').trim();
+  } else {
+    const parts = workingLine.split(/\s+/);
+    if (parts.length < 6) {
+      return null;
+    }
+
+    schedule = parts.slice(0, 5).join(' ');
+    command = parts.slice(5).join(' ').trim();
+  }
+
+  if (!schedule || !command || !isValidSchedule(schedule)) {
+    return null;
+  }
+
+  const digest = createHash('sha1').update(`${index}:${rawLine}`).digest('hex').slice(0, 12);
+  const commandName = command.split(/\s+/)[0]?.split('/').pop() ?? 'job';
+
+  return {
+    id: `external:${index}:${digest}`,
+    name: `External: ${commandName}`,
+    schedule,
+    command,
+    enabled,
+    managed: false,
+  };
+}
 
 function encodeName(name: string): string {
   return Buffer.from(name, 'utf8').toString('base64url');
@@ -171,11 +229,7 @@ function validateJobInput(job: Pick<CronJob, 'name' | 'schedule' | 'command'>): 
     throw new Error('Cron schedule is required');
   }
 
-  if (schedule.startsWith('@')) {
-    if (!ALLOWED_MACROS.has(schedule.toLowerCase())) {
-      throw new Error('Invalid cron macro schedule');
-    }
-  } else if (!cron.validate(schedule)) {
+  if (!isValidSchedule(schedule)) {
     throw new Error('Invalid cron schedule');
   }
 
@@ -196,9 +250,21 @@ async function persistEntries(entries: CrontabEntry[]): Promise<void> {
 
 export async function listJobs(): Promise<CronJob[]> {
   const entries = await readEntries();
-  return entries
-    .filter((entry): entry is Extract<CrontabEntry, { kind: 'managed' }> => entry.kind === 'managed')
-    .map((entry) => entry.job);
+  const jobs: CronJob[] = [];
+
+  entries.forEach((entry, index) => {
+    if (entry.kind === 'managed') {
+      jobs.push({ ...entry.job, managed: true });
+      return;
+    }
+
+    const externalJob = parseExternalJobFromRawLine(entry.raw, index);
+    if (externalJob) {
+      jobs.push(externalJob);
+    }
+  });
+
+  return jobs;
 }
 
 export async function createJob(data: Pick<CronJob, 'name' | 'schedule' | 'command' | 'enabled'>): Promise<CronJob> {
@@ -208,6 +274,7 @@ export async function createJob(data: Pick<CronJob, 'name' | 'schedule' | 'comma
     schedule: data.schedule.trim(),
     command: data.command.trim(),
     enabled: data.enabled ?? true,
+    managed: true,
   };
 
   validateJobInput(job);
@@ -235,6 +302,7 @@ export async function updateJob(id: string, patch: Partial<CronJob>): Promise<Cr
     schedule: (patch.schedule ?? entry.job.schedule).trim(),
     command: (patch.command ?? entry.job.command).trim(),
     enabled: typeof patch.enabled === 'boolean' ? patch.enabled : entry.job.enabled,
+    managed: true,
   };
 
   validateJobInput(nextJob);

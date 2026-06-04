@@ -136,6 +136,7 @@ const UsersSettingsSection = () => {
       setDisplayNameDrafts((prev) => ({ ...prev, [created.username]: created.username }));
       setUsernameDrafts((prev) => ({ ...prev, [created.user_id]: created.username }));
       setShowCreateForm(false);
+      await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to create user");
     } finally {
@@ -149,6 +150,7 @@ const UsersSettingsSection = () => {
       setPendingAction(actionKey);
       const updated = await updateUserStatus(user.username, nextActive);
       setUsers((prev) => prev.map((item) => (item.user_id === updated.user_id ? updated : item)));
+      await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to update user status");
     } finally {
@@ -168,6 +170,7 @@ const UsersSettingsSection = () => {
       setPendingAction(actionKey);
       await updateUserPassword(user.username, nextPassword);
       setPasswordDrafts((prev) => ({ ...prev, [user.username]: "" }));
+      await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to update password");
     } finally {
@@ -235,6 +238,7 @@ const UsersSettingsSection = () => {
         return next;
       });
       publishDisplayNames(nextDisplayNames);
+      await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to rename user");
     } finally {
@@ -259,6 +263,8 @@ const UsersSettingsSection = () => {
         window.location.href = "/login";
         return;
       }
+
+      await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to delete user");
     } finally {
@@ -278,6 +284,7 @@ const UsersSettingsSection = () => {
       await patchPreferences({ userDisplayNames: nextMap });
       setDisplayNames(nextMap);
       publishDisplayNames(nextMap);
+      await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to save display name");
     } finally {
@@ -325,6 +332,7 @@ const UsersSettingsSection = () => {
               placeholder="password (min 6 chars)"
             />
             <button
+              type="button"
               className="rounded-lg bg-white/90 px-4 py-2 text-sm font-semibold text-black transition hover:bg-white disabled:opacity-60"
               disabled={creatingUser || !newUsername.trim() || newPassword.length < 6}
               onClick={() => {
@@ -387,6 +395,7 @@ const UsersSettingsSection = () => {
                         disabled={isSelf}
                       />
                       <button
+                        type="button"
                         className="rounded-lg border border-white/15 bg-white/10 px-2 py-1 text-xs transition hover:bg-white/15 disabled:opacity-60"
                         disabled={!canSaveUsername}
                         onClick={() => {
@@ -412,6 +421,7 @@ const UsersSettingsSection = () => {
                         placeholder="Display name"
                       />
                       <button
+                        type="button"
                         className="rounded-lg border border-white/15 bg-white/10 px-2 py-1 text-xs transition hover:bg-white/15 disabled:opacity-60"
                         disabled={pendingAction === displayKey}
                         onClick={() => {
@@ -448,6 +458,7 @@ const UsersSettingsSection = () => {
                         placeholder="new password"
                       />
                       <button
+                        type="button"
                         className="rounded-lg border border-white/15 bg-white/10 px-2 py-1 text-xs transition hover:bg-white/15 disabled:opacity-60"
                         disabled={pendingAction === passwordKey || (passwordDrafts[user.username] ?? "").length < 6}
                         onClick={() => {
@@ -460,6 +471,7 @@ const UsersSettingsSection = () => {
                   </td>
                   <td className="px-3 py-2">
                     <button
+                      type="button"
                       className="rounded-lg border border-red-300/30 bg-red-500/10 px-2 py-1 text-xs text-red-200 transition hover:bg-red-500/20 disabled:opacity-60"
                       disabled={pendingAction === deleteKey}
                       onClick={() => {
