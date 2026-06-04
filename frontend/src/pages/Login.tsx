@@ -24,6 +24,18 @@ const Login = () => {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isTypingField =
+        !!target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable);
+
+      if (isTypingField) {
+        return;
+      }
+
       if (e.key === "v" || e.key === "V") {
         e.preventDefault();
         setIsDarkMode(prev => !prev);
