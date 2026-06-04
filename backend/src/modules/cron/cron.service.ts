@@ -1,56 +1,256 @@
+import { spawn, execFile } from 'child_process';
 import cron from 'node-cron';
 import { v4 as uuid } from 'uuid';
 import type { CronJob } from '../../types';
-import { execFile } from 'child_process';
 
-interface InternalJob extends CronJob {
-  _task?: cron.ScheduledTask;
+const MANAGED_MARKER = '# POLARSTAR-CRON:';
+const ALLOWED_MACROS = new Set(['@reboot', '@yearly', '@annually', '@monthly', '@weekly', '@daily', '@hourly']);
+
+type CrontabEntry =
+  | { kind: 'raw'; raw: string }
+  | { kind: 'managed'; job: CronJob };
+
+function encodeName(name: string): string {
+  return Buffer.from(name, 'utf8').toString('base64url');
 }
 
-const jobs = new Map<string, InternalJob>();
+function decodeName(encoded: string, fallbackId: string): string {
+  try {
+    const decoded = Buffer.from(encoded, 'base64url').toString('utf8').trim();
+    return decoded || `Job ${fallbackId}`;
+  } catch {
+    return `Job ${fallbackId}`;
+  }
+}
 
-function spawnJob(job: InternalJob): void {
-  job._task?.stop();
+function parseManagedJobFromLine(line: string): CronJob | null {
+  let workingLine = line;
+  let enabled = true;
 
-  if (!job.enabled) return;
+  if (/^\s*#\s*/.test(workingLine)) {
+    enabled = false;
+    workingLine = workingLine.replace(/^\s*#\s*/, '');
+  }
 
-  job._task = cron.schedule(job.schedule, () => {
-    job.lastRun = new Date().toISOString();
-    // Exécution sans shell pour éviter l'injection de commandes
-    const parts = job.command.split(/\s+/);
-    const bin = parts[0];
-    const args = parts.slice(1);
-    execFile(bin, args, { timeout: 30_000 }, (err, stdout, stderr) => {
-      if (err) console.error(`[cron:${job.id}] error:`, err.message);
-      else console.log(`[cron:${job.id}] stdout:`, stdout.slice(0, 500));
+  const markerIndex = workingLine.lastIndexOf(MANAGED_MARKER);
+  if (markerIndex === -1) {
+    return null;
+  }
+
+  const metadata = workingLine.slice(markerIndex + MANAGED_MARKER.length).trim();
+  const separatorIndex = metadata.indexOf(':');
+  if (separatorIndex <= 0) {
+    return null;
+  }
+
+  const id = metadata.slice(0, separatorIndex).trim();
+  const encodedName = metadata.slice(separatorIndex + 1).trim();
+  const name = decodeName(encodedName, id);
+
+  const scheduleAndCommand = workingLine.slice(0, markerIndex).trim();
+  if (!scheduleAndCommand) {
+    return null;
+  }
+
+  let schedule = '';
+  let command = '';
+
+  if (scheduleAndCommand.startsWith('@')) {
+    const pieces = scheduleAndCommand.split(/\s+/);
+    schedule = pieces[0] ?? '';
+    command = pieces.slice(1).join(' ').trim();
+  } else {
+    const pieces = scheduleAndCommand.split(/\s+/);
+    if (pieces.length < 6) {
+      return null;
+    }
+
+    schedule = pieces.slice(0, 5).join(' ');
+    command = pieces.slice(5).join(' ').trim();
+  }
+
+  if (!id || !schedule || !command) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    schedule,
+    command,
+    enabled,
+  };
+}
+
+function parseEntries(crontabContent: string): CrontabEntry[] {
+  if (!crontabContent.length) {
+    return [];
+  }
+
+  return crontabContent.split('\n').map((line) => {
+    const managed = parseManagedJobFromLine(line);
+    if (!managed) {
+      return { kind: 'raw', raw: line };
+    }
+    return { kind: 'managed', job: managed };
+  });
+}
+
+function formatManagedJob(job: CronJob): string {
+  const base = `${job.schedule.trim()} ${job.command.trim()}`.trim();
+  const marker = `${MANAGED_MARKER}${job.id}:${encodeName(job.name.trim())}`;
+  return job.enabled ? `${base} ${marker}` : `# ${base} ${marker}`;
+}
+
+function formatEntries(entries: CrontabEntry[]): string {
+  return entries
+    .map((entry) => {
+      if (entry.kind === 'raw') {
+        return entry.raw;
+      }
+      return formatManagedJob(entry.job);
+    })
+    .join('\n')
+    .replace(/\n+$/, '');
+}
+
+function readCrontab(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile('crontab', ['-l'], (error, stdout, stderr) => {
+      if (error) {
+        const noCrontab = /no crontab for/i.test(stderr ?? '');
+        if (noCrontab) {
+          resolve('');
+          return;
+        }
+        reject(new Error(stderr?.trim() || error.message || 'Unable to read system crontab'));
+        return;
+      }
+
+      resolve(stdout ?? '');
     });
   });
 }
 
-export function listJobs(): Omit<InternalJob, '_task'>[] {
-  return [...jobs.values()].map(({ _task: _, ...rest }) => rest);
+function writeCrontab(content: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('crontab', ['-']);
+    let stderr = '';
+
+    child.stderr.on('data', (chunk: Buffer | string) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (error) => {
+      reject(new Error(error.message));
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(stderr.trim() || 'Unable to write system crontab'));
+    });
+
+    child.stdin.write(content.length ? `${content}\n` : '');
+    child.stdin.end();
+  });
 }
 
-export function createJob(data: Pick<CronJob, 'name' | 'schedule' | 'command' | 'enabled'>): CronJob {
-  if (!cron.validate(data.schedule)) throw new Error('Invalid cron schedule');
-  const job: InternalJob = { id: uuid(), ...data };
-  jobs.set(job.id, job);
-  spawnJob(job);
+function validateJobInput(job: Pick<CronJob, 'name' | 'schedule' | 'command'>): void {
+  const name = job.name.trim();
+  const schedule = job.schedule.trim();
+  const command = job.command.trim();
+
+  if (!name) {
+    throw new Error('Job name is required');
+  }
+
+  if (!schedule) {
+    throw new Error('Cron schedule is required');
+  }
+
+  if (schedule.startsWith('@')) {
+    if (!ALLOWED_MACROS.has(schedule.toLowerCase())) {
+      throw new Error('Invalid cron macro schedule');
+    }
+  } else if (!cron.validate(schedule)) {
+    throw new Error('Invalid cron schedule');
+  }
+
+  if (!command) {
+    throw new Error('Job command is required');
+  }
+}
+
+async function readEntries(): Promise<CrontabEntry[]> {
+  const crontabContent = await readCrontab();
+  return parseEntries(crontabContent);
+}
+
+async function persistEntries(entries: CrontabEntry[]): Promise<void> {
+  const content = formatEntries(entries);
+  await writeCrontab(content);
+}
+
+export async function listJobs(): Promise<CronJob[]> {
+  const entries = await readEntries();
+  return entries
+    .filter((entry): entry is Extract<CrontabEntry, { kind: 'managed' }> => entry.kind === 'managed')
+    .map((entry) => entry.job);
+}
+
+export async function createJob(data: Pick<CronJob, 'name' | 'schedule' | 'command' | 'enabled'>): Promise<CronJob> {
+  const job: CronJob = {
+    id: uuid(),
+    name: data.name.trim(),
+    schedule: data.schedule.trim(),
+    command: data.command.trim(),
+    enabled: data.enabled ?? true,
+  };
+
+  validateJobInput(job);
+
+  const entries = await readEntries();
+  entries.push({ kind: 'managed', job });
+  await persistEntries(entries);
+
   return job;
 }
 
-export function updateJob(id: string, patch: Partial<CronJob>): CronJob {
-  const job = jobs.get(id);
-  if (!job) throw new Error('Job not found');
-  if (patch.schedule && !cron.validate(patch.schedule)) throw new Error('Invalid cron schedule');
-  Object.assign(job, patch);
-  spawnJob(job);
-  return job;
+export async function updateJob(id: string, patch: Partial<CronJob>): Promise<CronJob> {
+  const entries = await readEntries();
+  const entry = entries.find((item): item is Extract<CrontabEntry, { kind: 'managed' }> => item.kind === 'managed' && item.job.id === id);
+
+  if (!entry) {
+    throw new Error('Job not found');
+  }
+
+  const nextJob: CronJob = {
+    ...entry.job,
+    ...patch,
+    id: entry.job.id,
+    name: (patch.name ?? entry.job.name).trim(),
+    schedule: (patch.schedule ?? entry.job.schedule).trim(),
+    command: (patch.command ?? entry.job.command).trim(),
+    enabled: typeof patch.enabled === 'boolean' ? patch.enabled : entry.job.enabled,
+  };
+
+  validateJobInput(nextJob);
+
+  entry.job = nextJob;
+  await persistEntries(entries);
+  return nextJob;
 }
 
-export function deleteJob(id: string): void {
-  const job = jobs.get(id);
-  if (!job) throw new Error('Job not found');
-  job._task?.stop();
-  jobs.delete(id);
+export async function deleteJob(id: string): Promise<void> {
+  const entries = await readEntries();
+  const filtered = entries.filter((entry) => entry.kind !== 'managed' || entry.job.id !== id);
+
+  if (filtered.length === entries.length) {
+    throw new Error('Job not found');
+  }
+
+  await persistEntries(filtered);
 }
