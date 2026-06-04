@@ -7,11 +7,12 @@
 #   - Node.js >= 22  (the script can install it via NodeSource if missing)
 #   - npm            (bundled with Node.js)
 #   - openssl        (used to generate secrets, available on most Linux distros)
+#   - nginx + certbot (optional: installed automatically when enabling domain)
 #
 # NOT required on the host server:
 #   - MySQL / PostgreSQL: ServerHub is a CLIENT that connects to them remotely
 #     (like phpMyAdmin). No local DB server is required.
-#   - rsync, apache, nginx, php: none
+#   - rsync, apache, php: none
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -19,6 +20,7 @@ APP_DIR="/opt/serverhub"
 SERVICE_NAME="serverhub"
 NODE_MIN_VERSION=22
 NODE_DISTRO_VERSION="22.16.0"
+NGINX_SITE_NAME="serverhub"
 
 get_node_major_version() {
   if ! command -v node &>/dev/null; then
@@ -180,6 +182,112 @@ if ! command -v openssl &>/dev/null; then
   fi
 fi
 
+install_nginx_and_certbot() {
+  if ! require_apt_ready; then
+    echo "apt-get is required to install nginx/certbot automatically."
+    echo "Install nginx and certbot manually, then rerun the script."
+    exit 1
+  fi
+
+  echo "→ Installing nginx + certbot..."
+  apt-get update -y
+  apt-get install -y nginx certbot python3-certbot-nginx
+  systemctl enable nginx
+  systemctl start nginx
+}
+
+configure_nginx_site() {
+  local domain="$1"
+  local port="$2"
+  local site_file="/etc/nginx/sites-available/${NGINX_SITE_NAME}.conf"
+  local site_link="/etc/nginx/sites-enabled/${NGINX_SITE_NAME}.conf"
+
+  echo "→ Creating nginx site for ${domain}..."
+  cat > "$site_file" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+
+    location / {
+        proxy_pass http://127.0.0.1:${port};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+EOF
+
+  ln -sfn "$site_file" "$site_link"
+  rm -f /etc/nginx/sites-enabled/default
+
+  nginx -t
+  systemctl reload nginx
+}
+
+setup_domain_and_tls() {
+  local app_port="$1"
+  local server_ip domain email dns_ip certbot_cmd
+
+  echo ""
+  echo "Do you want to configure a domain with nginx + HTTPS now? [y/N]"
+  read -r domain_choice
+
+  case "${domain_choice,,}" in
+    y|yes)
+      ;;
+    *)
+      echo "→ Skipping nginx + certbot setup."
+      return
+      ;;
+  esac
+
+  echo "Enter the domain name to use (example: admin.example.com):"
+  read -r domain
+  if [[ -z "${domain//[[:space:]]/}" ]]; then
+    echo "No domain provided. Skipping nginx + certbot setup."
+    return
+  fi
+
+  install_nginx_and_certbot
+  configure_nginx_site "$domain" "$app_port"
+
+  server_ip="$(hostname -I | awk '{print $1}')"
+  dns_ip="$(getent ahostsv4 "$domain" 2>/dev/null | awk 'NR==1 {print $1}')"
+
+  if [[ -n "$dns_ip" && -n "$server_ip" && "$dns_ip" != "$server_ip" ]]; then
+    echo "Warning: ${domain} resolves to ${dns_ip}, but this server IP is ${server_ip}."
+    echo "HTTPS issuance may fail until DNS points to this server."
+    echo "Press Enter to continue anyway, or Ctrl+C to cancel."
+    read -r
+  fi
+
+  echo "Enter an email for Let's Encrypt notices (leave empty to skip email):"
+  read -r email
+
+  certbot_cmd=(certbot --nginx -d "$domain" --redirect --agree-tos -n)
+  if [[ -n "${email//[[:space:]]/}" ]]; then
+    certbot_cmd+=( -m "$email" )
+  else
+    certbot_cmd+=( --register-unsafely-without-email )
+  fi
+
+  echo "→ Requesting HTTPS certificate with certbot..."
+  if ! "${certbot_cmd[@]}"; then
+    echo "Certbot failed."
+    echo "You can retry manually once DNS is ready:"
+    echo "  certbot --nginx -d ${domain} --redirect"
+    return
+  fi
+
+  systemctl reload nginx
+  echo "✓ Domain configured with HTTPS: https://${domain}"
+}
+
 # ── Internet access for npm ──────────────────────────────────────────────────
 
 # -- Build tools (required by better-sqlite3 native addon) --------------------
@@ -252,6 +360,20 @@ npm install
 echo "→ Installing frontend dependencies..."
 cd "$APP_DIR/frontend"
 npm install
+
+run_npm_audit_fix() {
+  local target_dir="$1"
+  local label="$2"
+
+  echo "→ Running npm audit fix for ${label}..."
+  cd "$target_dir"
+  if ! npm audit fix; then
+    echo "Warning: npm audit fix failed for ${label}. Continuing installation."
+  fi
+}
+
+run_npm_audit_fix "$APP_DIR/backend" "backend"
+run_npm_audit_fix "$APP_DIR/frontend" "frontend"
 
 # ── Build ────────────────────────────────────────────────────────────────────
 echo "→ Building frontend..."
@@ -338,6 +460,9 @@ systemctl restart "$SERVICE_NAME"
 # ── Result ───────────────────────────────────────────────────────────────────
 PORT=$(grep "^PORT=" "$ENV_FILE" | cut -d= -f2 || echo "8080")
 SERVER_IP=$(hostname -I | awk '{print $1}')
+
+setup_domain_and_tls "$PORT"
+
 echo ""
 echo "✓ ServerHub installed and started."
 echo ""
