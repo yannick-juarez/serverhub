@@ -187,12 +187,8 @@ function defaultStorage(): StorageData {
     ? config.admin.password
     : bcrypt.hashSync(config.admin.password, 10);
   const adminUserId = randomUUID();
-  const sofiaUserId = randomUUID();
-  const ryanUserId = randomUUID();
   const generalChannelId = randomUUID();
   const incidentsChannelId = randomUUID();
-  const directId = randomUUID();
-  const opsGroupId = randomUUID();
 
   return {
     connections: {
@@ -241,24 +237,6 @@ function defaultStorage(): StorageData {
         created_at: now,
         updated_at: now,
       },
-      {
-        user_id: sofiaUserId,
-        workspace_id: workspaceId,
-        username: 'sofia.patel',
-        password_hash: bcrypt.hashSync('serverhub', 10),
-        is_active: true,
-        created_at: now,
-        updated_at: now,
-      },
-      {
-        user_id: ryanUserId,
-        workspace_id: workspaceId,
-        username: 'ryan.chen',
-        password_hash: bcrypt.hashSync('serverhub', 10),
-        is_active: true,
-        created_at: now,
-        updated_at: now,
-      },
     ],
     messages: {
       channels: [
@@ -269,8 +247,6 @@ function defaultStorage(): StorageData {
           description: 'General team communication',
           read_state: [
             { user_id: adminUserId, last_read_at: now },
-            { user_id: sofiaUserId, last_read_at: null },
-            { user_id: ryanUserId, last_read_at: null },
           ],
           created_at: now,
           updated_at: now,
@@ -282,43 +258,13 @@ function defaultStorage(): StorageData {
           description: 'Live incident coordination channel',
           read_state: [
             { user_id: adminUserId, last_read_at: now },
-            { user_id: sofiaUserId, last_read_at: null },
-            { user_id: ryanUserId, last_read_at: null },
           ],
           created_at: now,
           updated_at: now,
         },
       ],
-      directs: [
-        {
-          direct_id: directId,
-          workspace_id: workspaceId,
-          participant_user_ids: [adminUserId, sofiaUserId],
-          read_state: [
-            { user_id: adminUserId, last_read_at: null },
-            { user_id: sofiaUserId, last_read_at: now },
-          ],
-          created_at: now,
-          updated_at: now,
-        },
-      ],
-      groups: [
-        {
-          group_id: opsGroupId,
-          workspace_id: workspaceId,
-          name: 'Ops War Room',
-          description: 'Shared coordination for infrastructure events',
-          member_user_ids: [adminUserId, sofiaUserId, ryanUserId],
-          created_by_user_id: adminUserId,
-          read_state: [
-            { user_id: adminUserId, last_read_at: null },
-            { user_id: sofiaUserId, last_read_at: null },
-            { user_id: ryanUserId, last_read_at: now },
-          ],
-          created_at: now,
-          updated_at: now,
-        },
-      ],
+      directs: [],
+      groups: [],
       items: [
         {
           message_id: randomUUID(),
@@ -337,26 +283,6 @@ function defaultStorage(): StorageData {
           conversation_id: incidentsChannelId,
           author_user_id: adminUserId,
           content: 'Incident room initialized. Use this channel for active events.',
-          created_at: now,
-          updated_at: now,
-        },
-        {
-          message_id: randomUUID(),
-          workspace_id: workspaceId,
-          conversation_type: 'direct',
-          conversation_id: directId,
-          author_user_id: sofiaUserId,
-          content: 'Can you review the dashboard alert tuning when you have a minute?',
-          created_at: now,
-          updated_at: now,
-        },
-        {
-          message_id: randomUUID(),
-          workspace_id: workspaceId,
-          conversation_type: 'group',
-          conversation_id: opsGroupId,
-          author_user_id: ryanUserId,
-          content: 'War room is ready. I pinned the latest infra notes.',
           created_at: now,
           updated_at: now,
         },
