@@ -229,9 +229,50 @@ EOF
   systemctl reload nginx
 }
 
+detect_existing_https_domain() {
+  local site_file="/etc/nginx/sites-available/${NGINX_SITE_NAME}.conf"
+  local domain cert_file
+
+  if [[ ! -f "$site_file" ]]; then
+    return 1
+  fi
+
+  if ! grep -Eq 'listen[[:space:]]+443|ssl_certificate' "$site_file"; then
+    return 1
+  fi
+
+  domain="$(awk '/server_name/ {
+    for (i = 2; i <= NF; i++) {
+      gsub(/;/, "", $i)
+      if ($i != "_" && $i !~ /^\$/) {
+        print $i
+        exit
+      }
+    }
+  }' "$site_file")"
+
+  if [[ -z "${domain//[[:space:]]/}" ]]; then
+    return 1
+  fi
+
+  cert_file="/etc/letsencrypt/live/${domain}/fullchain.pem"
+  if [[ -f "$cert_file" ]]; then
+    printf '%s\n' "$domain"
+    return 0
+  fi
+
+  return 1
+}
+
 setup_domain_and_tls() {
   local app_port="$1"
-  local server_ip domain email dns_ip certbot_cmd
+  local server_ip domain email dns_ip certbot_cmd existing_domain
+
+  if existing_domain="$(detect_existing_https_domain)"; then
+    echo "→ Existing nginx + HTTPS configuration detected for ${existing_domain}."
+    echo "→ Skipping nginx + certbot setup."
+    return
+  fi
 
   echo ""
   echo "Do you want to configure a domain with nginx + HTTPS now? [y/N]"
