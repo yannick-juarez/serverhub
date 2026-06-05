@@ -1,6 +1,6 @@
 import { spawn, execFile } from 'child_process';
 import { createHash } from 'crypto';
-import { readdir, readFile } from 'fs/promises';
+import { readdir, readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
 import cron from 'node-cron';
 import { v4 as uuid } from 'uuid';
@@ -8,16 +8,71 @@ import type { CronJob } from '../../types';
 
 const MANAGED_MARKER = '# POLARSTAR-CRON:';
 const ALLOWED_MACROS = new Set(['@reboot', '@yearly', '@annually', '@monthly', '@weekly', '@daily', '@hourly']);
+const CRON_D_DIR = '/etc/cron.d';
 
 type CrontabEntry =
   | { kind: 'raw'; raw: string }
   | { kind: 'managed'; job: CronJob };
+
+type CronDLine = {
+  schedule: string;
+  user: string;
+  command: string;
+  enabled: boolean;
+};
+
+class CronServiceError extends Error {
+  statusCode: number;
+
+  constructor(statusCode: number, message: string) {
+    super(message);
+    this.statusCode = statusCode;
+    this.name = 'CronServiceError';
+  }
+}
+
+function serviceError(statusCode: number, message: string): CronServiceError {
+  return new CronServiceError(statusCode, message);
+}
+
+function mapFsError(error: unknown, action: string, target: string): CronServiceError {
+  const fsError = error as NodeJS.ErrnoException;
+  const code = fsError?.code;
+
+  if (code === 'EACCES' || code === 'EPERM') {
+    return serviceError(403, `Permission denied while trying to ${action} ${target}`);
+  }
+
+  if (code === 'EROFS') {
+    return serviceError(403, `${target} is read-only`);
+  }
+
+  if (code === 'ENOENT') {
+    return serviceError(404, `${target} not found`);
+  }
+
+  return serviceError(500, `Unable to ${action} ${target}`);
+}
 
 function isValidSchedule(schedule: string): boolean {
   if (schedule.startsWith('@')) {
     return ALLOWED_MACROS.has(schedule.toLowerCase());
   }
   return cron.validate(schedule);
+}
+
+function validateScheduleAndCommand(schedule: string, command: string): void {
+  if (!schedule.trim()) {
+    throw serviceError(400, 'Cron schedule is required');
+  }
+
+  if (!isValidSchedule(schedule.trim())) {
+    throw serviceError(400, 'Invalid cron schedule');
+  }
+
+  if (!command.trim()) {
+    throw serviceError(400, 'Job command is required');
+  }
 }
 
 function parseExternalJobFromRawLine(rawLine: string, index: number): CronJob | null {
@@ -68,6 +123,11 @@ function parseExternalJobFromRawLine(rawLine: string, index: number): CronJob | 
     enabled,
     managed: false,
   };
+}
+
+function formatExternalJobLine(job: Pick<CronJob, 'schedule' | 'command' | 'enabled'>): string {
+  const line = `${job.schedule.trim()} ${job.command.trim()}`.trim();
+  return job.enabled ? line : `# ${line}`;
 }
 
 function encodeName(name: string): string {
@@ -183,7 +243,12 @@ function readCrontab(): Promise<string> {
           resolve('');
           return;
         }
-        reject(new Error(stderr?.trim() || error.message || 'Unable to read system crontab'));
+        const message = stderr?.trim() || error.message || 'Unable to read system crontab';
+        if (/permission denied|not allowed/i.test(message)) {
+          reject(serviceError(403, 'Permission denied while reading current crontab'));
+          return;
+        }
+        reject(serviceError(500, message));
         return;
       }
 
@@ -202,7 +267,7 @@ function writeCrontab(content: string): Promise<void> {
     });
 
     child.on('error', (error) => {
-      reject(new Error(error.message));
+      reject(serviceError(500, error.message || 'Unable to write current crontab'));
     });
 
     child.on('close', (code) => {
@@ -210,7 +275,12 @@ function writeCrontab(content: string): Promise<void> {
         resolve();
         return;
       }
-      reject(new Error(stderr.trim() || 'Unable to write system crontab'));
+      const message = stderr.trim() || 'Unable to write current crontab';
+      if (/permission denied|not allowed/i.test(message)) {
+        reject(serviceError(403, 'Permission denied while writing current crontab'));
+        return;
+      }
+      reject(serviceError(500, message));
     });
 
     child.stdin.write(content.length ? `${content}\n` : '');
@@ -224,20 +294,10 @@ function validateJobInput(job: Pick<CronJob, 'name' | 'schedule' | 'command'>): 
   const command = job.command.trim();
 
   if (!name) {
-    throw new Error('Job name is required');
+    throw serviceError(400, 'Job name is required');
   }
 
-  if (!schedule) {
-    throw new Error('Cron schedule is required');
-  }
-
-  if (!isValidSchedule(schedule)) {
-    throw new Error('Invalid cron schedule');
-  }
-
-  if (!command) {
-    throw new Error('Job command is required');
-  }
+  validateScheduleAndCommand(schedule, command);
 }
 
 async function readEntries(): Promise<CrontabEntry[]> {
@@ -250,20 +310,29 @@ async function persistEntries(entries: CrontabEntry[]): Promise<void> {
   await writeCrontab(content);
 }
 
-const CRON_D_DIR = '/etc/cron.d';
-
-function parseExternalJobFromCronDLine(rawLine: string, fileIndex: number, lineIndex: number, source: string): CronJob | null {
+function parseCronDLine(rawLine: string): CronDLine | null {
   let workingLine = rawLine.trim();
-  if (!workingLine.length || workingLine.startsWith('#')) {
+  if (!workingLine.length) {
+    return null;
+  }
+
+  let enabled = true;
+  if (workingLine.startsWith('#')) {
+    enabled = false;
+    workingLine = workingLine.replace(/^#\s*/, '');
+  }
+
+  if (!workingLine.length) {
     return null;
   }
 
   // Skip variable assignments (e.g. SHELL=..., PATH=...)
-  if (/^[A-Z_]+=/.test(workingLine)) {
+  if (/^[A-Z_][A-Z0-9_]*=/.test(workingLine)) {
     return null;
   }
 
   let schedule = '';
+  let user = '';
   let command = '';
 
   if (workingLine.startsWith('@')) {
@@ -273,7 +342,7 @@ function parseExternalJobFromCronDLine(rawLine: string, fileIndex: number, lineI
       return null;
     }
     schedule = parts[0] ?? '';
-    // parts[1] is the username — skip it
+    user = parts[1] ?? '';
     command = parts.slice(2).join(' ').trim();
   } else {
     // min hour dom month dow user command
@@ -282,24 +351,72 @@ function parseExternalJobFromCronDLine(rawLine: string, fileIndex: number, lineI
       return null;
     }
     schedule = parts.slice(0, 5).join(' ');
-    // parts[5] is the username — skip it
+    user = parts[5] ?? '';
     command = parts.slice(6).join(' ').trim();
   }
 
-  if (!schedule || !command || !isValidSchedule(schedule)) {
+  if (!schedule || !user || !command || !isValidSchedule(schedule)) {
+    return null;
+  }
+
+  return {
+    schedule,
+    user,
+    command,
+    enabled,
+  };
+}
+
+function formatCronDLine(line: CronDLine): string {
+  const payload = `${line.schedule.trim()} ${line.user.trim()} ${line.command.trim()}`.trim();
+  return line.enabled ? payload : `# ${payload}`;
+}
+
+function parseExternalJobFromCronDLine(rawLine: string, lineIndex: number, source: string): CronJob | null {
+  const parsed = parseCronDLine(rawLine);
+  if (!parsed) {
     return null;
   }
 
   const digest = createHash('sha1').update(`${source}:${lineIndex}:${rawLine}`).digest('hex').slice(0, 12);
-  const commandName = command.split(/\s+/)[0]?.split('/').pop() ?? 'job';
+  const commandName = parsed.command.split(/\s+/)[0]?.split('/').pop() ?? 'job';
 
   return {
-    id: `crond:${fileIndex}:${lineIndex}:${digest}`,
+    id: `crond:${encodeURIComponent(source)}:${lineIndex}:${digest}`,
     name: `cron.d/${source}: ${commandName}`,
-    schedule,
-    command,
-    enabled: true,
+    schedule: parsed.schedule,
+    command: parsed.command,
+    enabled: parsed.enabled,
     managed: false,
+  };
+}
+
+function parseCronDId(id: string): { source: string; lineIndex: number; digest: string } | null {
+  const match = /^crond:([^:]+):(\d+):([a-f0-9]{12})$/.exec(id);
+  if (!match) {
+    return null;
+  }
+
+  try {
+    return {
+      source: decodeURIComponent(match[1]),
+      lineIndex: Number(match[2]),
+      digest: match[3],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseExternalCrontabId(id: string): { lineIndex: number; digest: string } | null {
+  const match = /^external:(\d+):([a-f0-9]{12})$/.exec(id);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    lineIndex: Number(match[1]),
+    digest: match[2],
   };
 }
 
@@ -317,31 +434,185 @@ async function listCronDJobs(): Promise<CronJob[]> {
   // Sort for stable ordering
   files.sort();
 
-  await Promise.all(
-    files.map(async (fileName, fileIndex) => {
-      // Skip files with dots or tildes (backups, dpkg leftovers, etc.)
-      if (/[.~]/.test(fileName)) {
-        return;
-      }
+  for (const fileName of files) {
+    // Skip files with dots or tildes (backups, dpkg leftovers, etc.)
+    if (/[.~]/.test(fileName)) {
+      continue;
+    }
 
-      const filePath = join(CRON_D_DIR, fileName);
-      let content: string;
-      try {
-        content = await readFile(filePath, 'utf8');
-      } catch {
-        return;
-      }
+    const filePath = join(CRON_D_DIR, fileName);
+    let content: string;
+    try {
+      content = await readFile(filePath, 'utf8');
+    } catch {
+      continue;
+    }
 
-      content.split('\n').forEach((line, lineIndex) => {
-        const job = parseExternalJobFromCronDLine(line, fileIndex, lineIndex, fileName);
-        if (job) {
-          jobs.push(job);
-        }
-      });
-    }),
-  );
+    content.split('\n').forEach((line, lineIndex) => {
+      const job = parseExternalJobFromCronDLine(line, lineIndex, fileName);
+      if (job) {
+        jobs.push(job);
+      }
+    });
+  }
 
   return jobs;
+}
+
+function findExternalCrontabEntry(entries: CrontabEntry[], id: string): { index: number; job: CronJob } | null {
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (entry.kind !== 'raw') {
+      continue;
+    }
+
+    const parsed = parseExternalJobFromRawLine(entry.raw, index);
+    if (parsed && parsed.id === id) {
+      return { index, job: parsed };
+    }
+  }
+
+  return null;
+}
+
+async function updateExternalCrontabJob(id: string, patch: Partial<CronJob>): Promise<CronJob> {
+  if (!parseExternalCrontabId(id)) {
+    throw serviceError(404, 'Job not found');
+  }
+
+  const entries = await readEntries();
+  const found = findExternalCrontabEntry(entries, id);
+  if (!found) {
+    throw serviceError(404, 'Job not found');
+  }
+
+  const schedule = (patch.schedule ?? found.job.schedule).trim();
+  const command = (patch.command ?? found.job.command).trim();
+  const enabled = typeof patch.enabled === 'boolean' ? patch.enabled : found.job.enabled;
+  validateScheduleAndCommand(schedule, command);
+
+  entries[found.index] = {
+    kind: 'raw',
+    raw: formatExternalJobLine({ schedule, command, enabled }),
+  };
+
+  await persistEntries(entries);
+
+  const updated = parseExternalJobFromRawLine((entries[found.index] as { kind: 'raw'; raw: string }).raw, found.index);
+  if (!updated) {
+    throw serviceError(500, 'Unable to update external crontab entry');
+  }
+
+  return updated;
+}
+
+async function deleteExternalCrontabJob(id: string): Promise<void> {
+  if (!parseExternalCrontabId(id)) {
+    throw serviceError(404, 'Job not found');
+  }
+
+  const entries = await readEntries();
+  const found = findExternalCrontabEntry(entries, id);
+  if (!found) {
+    throw serviceError(404, 'Job not found');
+  }
+
+  entries.splice(found.index, 1);
+  await persistEntries(entries);
+}
+
+async function updateCronDJob(id: string, patch: Partial<CronJob>): Promise<CronJob> {
+  const parsedId = parseCronDId(id);
+  if (!parsedId) {
+    throw serviceError(404, 'Job not found');
+  }
+
+  const { source, lineIndex } = parsedId;
+  const filePath = join(CRON_D_DIR, source);
+  let content: string;
+
+  try {
+    content = await readFile(filePath, 'utf8');
+  } catch (error) {
+    throw mapFsError(error, 'read', `cron file ${filePath}`);
+  }
+
+  const lines = content.split('\n');
+  const rawLine = lines[lineIndex];
+  if (rawLine === undefined) {
+    throw serviceError(404, 'Job not found');
+  }
+
+  const listedJob = parseExternalJobFromCronDLine(rawLine, lineIndex, source);
+  if (!listedJob || listedJob.id !== id) {
+    throw serviceError(404, 'Job not found (entry changed, refresh and retry)');
+  }
+
+  const parsedLine = parseCronDLine(rawLine);
+  if (!parsedLine) {
+    throw serviceError(400, 'Selected cron.d entry is not editable');
+  }
+
+  const schedule = (patch.schedule ?? parsedLine.schedule).trim();
+  const command = (patch.command ?? parsedLine.command).trim();
+  const enabled = typeof patch.enabled === 'boolean' ? patch.enabled : parsedLine.enabled;
+  validateScheduleAndCommand(schedule, command);
+
+  lines[lineIndex] = formatCronDLine({
+    schedule,
+    command,
+    user: parsedLine.user,
+    enabled,
+  });
+
+  try {
+    await writeFile(filePath, `${lines.join('\n')}`, 'utf8');
+  } catch (error) {
+    throw mapFsError(error, 'write', `cron file ${filePath}`);
+  }
+
+  const updated = parseExternalJobFromCronDLine(lines[lineIndex], lineIndex, source);
+  if (!updated) {
+    throw serviceError(500, 'Unable to parse updated cron.d entry');
+  }
+
+  return updated;
+}
+
+async function deleteCronDJob(id: string): Promise<void> {
+  const parsedId = parseCronDId(id);
+  if (!parsedId) {
+    throw serviceError(404, 'Job not found');
+  }
+
+  const { source, lineIndex } = parsedId;
+  const filePath = join(CRON_D_DIR, source);
+  let content: string;
+
+  try {
+    content = await readFile(filePath, 'utf8');
+  } catch (error) {
+    throw mapFsError(error, 'read', `cron file ${filePath}`);
+  }
+
+  const lines = content.split('\n');
+  const rawLine = lines[lineIndex];
+  if (rawLine === undefined) {
+    throw serviceError(404, 'Job not found');
+  }
+
+  const listedJob = parseExternalJobFromCronDLine(rawLine, lineIndex, source);
+  if (!listedJob || listedJob.id !== id) {
+    throw serviceError(404, 'Job not found (entry changed, refresh and retry)');
+  }
+
+  lines.splice(lineIndex, 1);
+
+  try {
+    await writeFile(filePath, `${lines.join('\n')}`, 'utf8');
+  } catch (error) {
+    throw mapFsError(error, 'write', `cron file ${filePath}`);
+  }
 }
 
 export async function listJobs(): Promise<CronJob[]> {
@@ -385,11 +656,19 @@ export async function createJob(data: Pick<CronJob, 'name' | 'schedule' | 'comma
 }
 
 export async function updateJob(id: string, patch: Partial<CronJob>): Promise<CronJob> {
+  if (id.startsWith('crond:')) {
+    return updateCronDJob(id, patch);
+  }
+
+  if (id.startsWith('external:')) {
+    return updateExternalCrontabJob(id, patch);
+  }
+
   const entries = await readEntries();
   const entry = entries.find((item): item is Extract<CrontabEntry, { kind: 'managed' }> => item.kind === 'managed' && item.job.id === id);
 
   if (!entry) {
-    throw new Error('Job not found');
+    throw serviceError(404, 'Job not found');
   }
 
   const nextJob: CronJob = {
@@ -411,11 +690,21 @@ export async function updateJob(id: string, patch: Partial<CronJob>): Promise<Cr
 }
 
 export async function deleteJob(id: string): Promise<void> {
+  if (id.startsWith('crond:')) {
+    await deleteCronDJob(id);
+    return;
+  }
+
+  if (id.startsWith('external:')) {
+    await deleteExternalCrontabJob(id);
+    return;
+  }
+
   const entries = await readEntries();
   const filtered = entries.filter((entry) => entry.kind !== 'managed' || entry.job.id !== id);
 
   if (filtered.length === entries.length) {
-    throw new Error('Job not found');
+    throw serviceError(404, 'Job not found');
   }
 
   await persistEntries(filtered);

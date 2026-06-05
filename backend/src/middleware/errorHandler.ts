@@ -9,5 +9,10 @@ export function errorHandler(
   console.error('[ServerHub] Unhandled error:', err);
 
   const message = err instanceof Error ? err.message : 'Internal server error';
-  res.status(500).json({ success: false, error: message });
+  const statusCode =
+    typeof err === 'object' && err !== null && 'statusCode' in err && typeof (err as { statusCode: unknown }).statusCode === 'number'
+      ? (err as { statusCode: number }).statusCode
+      : 500;
+
+  res.status(statusCode).json({ success: false, error: message });
 }

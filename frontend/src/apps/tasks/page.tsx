@@ -106,11 +106,6 @@ export default function TasksPage() {
   };
 
   const startEdit = (job: CronJob) => {
-    if (!isManagedJob(job)) {
-      setError("External crontab entries are read-only in this panel.");
-      return;
-    }
-
     setForm({
       name: job.name,
       schedule: job.schedule,
@@ -123,11 +118,6 @@ export default function TasksPage() {
   };
 
   const handleDelete = async (job: CronJob) => {
-    if (!isManagedJob(job)) {
-      setError("External crontab entries are read-only in this panel.");
-      return;
-    }
-
     if (!window.confirm(`Delete cron task "${job.name}"?`)) {
       return;
     }
@@ -148,11 +138,6 @@ export default function TasksPage() {
   };
 
   const toggleJob = async (job: CronJob) => {
-    if (!isManagedJob(job)) {
-      setError("External crontab entries are read-only in this panel.");
-      return;
-    }
-
     setError(null);
     setMessage(null);
 
@@ -292,7 +277,7 @@ export default function TasksPage() {
                           </span>
                           {!managed ? (
                             <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
-                              External (read-only)
+                              External
                             </span>
                           ) : null}
                         </div>
@@ -307,16 +292,12 @@ export default function TasksPage() {
                           onClick={() => {
                             void toggleJob(job);
                           }}
-                          disabled={!managed}
-                          title={!managed ? "External entries are read-only" : undefined}
                         >
                           {job.enabled ? "Disable" : "Enable"}
                         </button>
                         <button
                           className="rounded-md border border-blue-300/20 bg-blue-500/10 px-2.5 py-1.5 text-xs text-blue-200 hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                           onClick={() => startEdit(job)}
-                          disabled={!managed}
-                          title={!managed ? "External entries are read-only" : undefined}
                         >
                           Edit
                         </button>
@@ -325,8 +306,6 @@ export default function TasksPage() {
                           onClick={() => {
                             void handleDelete(job);
                           }}
-                          disabled={!managed}
-                          title={!managed ? "External entries are read-only" : undefined}
                         >
                           Delete
                         </button>
