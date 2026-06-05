@@ -176,16 +176,14 @@ export default function TasksPage() {
         <div className="absolute bottom-0 left-1/3 h-72 w-72 rounded-full bg-amber-500/10 blur-3xl" />
       </div>
 
-      <div className="relative z-10 mx-auto flex h-full w-full max-w-7xl flex-col gap-4 p-4 lg:p-6">
-        <header className="rounded-xl border border-white/10 bg-black/40 p-4 backdrop-blur-md">
+      <div className="relative z-10 flex h-full w-full flex-col">
+        <header className="shrink-0 border-b border-white/10 bg-black/30 px-6 py-3 backdrop-blur-md">
           <p className="text-xs uppercase tracking-wide text-slate-400">Task Manager</p>
           <h1 className="mt-1 text-2xl font-semibold">Cron Jobs</h1>
-          <p className="mt-2 text-sm text-slate-300">
-            Create, edit and manage scheduled jobs. This UI uses the backend /api/cron endpoints.
-          </p>
         </header>
 
-        <div className="grid flex-1 grid-cols-1 gap-4 xl:grid-cols-[370px_minmax(0,1fr)]">
+        <div className="flex-1 overflow-auto px-4 py-4 lg:px-6">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[370px_minmax(0,1fr)]">
           <section className="rounded-xl border border-white/10 bg-black/40 p-4 backdrop-blur-md">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">
               {editingId ? "Edit Task" : "New Task"}
@@ -341,15 +339,16 @@ export default function TasksPage() {
               </div>
             ) : null}
           </section>
+          </div>
+
+          {error ? (
+            <div className="mt-4 rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>
+          ) : null}
+
+          {message ? (
+            <div className="mt-4 rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{message}</div>
+          ) : null}
         </div>
-
-        {error ? (
-          <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>
-        ) : null}
-
-        {message ? (
-          <div className="rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{message}</div>
-        ) : null}
       </div>
     </div>
   );

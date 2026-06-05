@@ -1,5 +1,7 @@
 import { spawn, execFile } from 'child_process';
 import { createHash } from 'crypto';
+import { readdir, readFile } from 'fs/promises';
+import { join } from 'path';
 import cron from 'node-cron';
 import { v4 as uuid } from 'uuid';
 import type { CronJob } from '../../types';
@@ -248,8 +250,102 @@ async function persistEntries(entries: CrontabEntry[]): Promise<void> {
   await writeCrontab(content);
 }
 
+const CRON_D_DIR = '/etc/cron.d';
+
+function parseExternalJobFromCronDLine(rawLine: string, fileIndex: number, lineIndex: number, source: string): CronJob | null {
+  let workingLine = rawLine.trim();
+  if (!workingLine.length || workingLine.startsWith('#')) {
+    return null;
+  }
+
+  // Skip variable assignments (e.g. SHELL=..., PATH=...)
+  if (/^[A-Z_]+=/.test(workingLine)) {
+    return null;
+  }
+
+  let schedule = '';
+  let command = '';
+
+  if (workingLine.startsWith('@')) {
+    // @macro user command
+    const parts = workingLine.split(/\s+/);
+    if (parts.length < 3) {
+      return null;
+    }
+    schedule = parts[0] ?? '';
+    // parts[1] is the username — skip it
+    command = parts.slice(2).join(' ').trim();
+  } else {
+    // min hour dom month dow user command
+    const parts = workingLine.split(/\s+/);
+    if (parts.length < 7) {
+      return null;
+    }
+    schedule = parts.slice(0, 5).join(' ');
+    // parts[5] is the username — skip it
+    command = parts.slice(6).join(' ').trim();
+  }
+
+  if (!schedule || !command || !isValidSchedule(schedule)) {
+    return null;
+  }
+
+  const digest = createHash('sha1').update(`${source}:${lineIndex}:${rawLine}`).digest('hex').slice(0, 12);
+  const commandName = command.split(/\s+/)[0]?.split('/').pop() ?? 'job';
+
+  return {
+    id: `crond:${fileIndex}:${lineIndex}:${digest}`,
+    name: `cron.d/${source}: ${commandName}`,
+    schedule,
+    command,
+    enabled: true,
+    managed: false,
+  };
+}
+
+async function listCronDJobs(): Promise<CronJob[]> {
+  const jobs: CronJob[] = [];
+
+  let files: string[];
+  try {
+    files = await readdir(CRON_D_DIR);
+  } catch {
+    // Directory doesn't exist or isn't readable
+    return jobs;
+  }
+
+  // Sort for stable ordering
+  files.sort();
+
+  await Promise.all(
+    files.map(async (fileName, fileIndex) => {
+      // Skip files with dots or tildes (backups, dpkg leftovers, etc.)
+      if (/[.~]/.test(fileName)) {
+        return;
+      }
+
+      const filePath = join(CRON_D_DIR, fileName);
+      let content: string;
+      try {
+        content = await readFile(filePath, 'utf8');
+      } catch {
+        return;
+      }
+
+      content.split('\n').forEach((line, lineIndex) => {
+        const job = parseExternalJobFromCronDLine(line, fileIndex, lineIndex, fileName);
+        if (job) {
+          jobs.push(job);
+        }
+      });
+    }),
+  );
+
+  return jobs;
+}
+
 export async function listJobs(): Promise<CronJob[]> {
-  const entries = await readEntries();
+  const [entries, cronDJobs] = await Promise.all([readEntries(), listCronDJobs()]);
   const jobs: CronJob[] = [];
 
   entries.forEach((entry, index) => {
@@ -263,6 +359,8 @@ export async function listJobs(): Promise<CronJob[]> {
       jobs.push(externalJob);
     }
   });
+
+  jobs.push(...cronDJobs);
 
   return jobs;
 }
