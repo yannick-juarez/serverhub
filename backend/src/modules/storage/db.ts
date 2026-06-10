@@ -114,6 +114,7 @@ function applySchema(db: Database.Database): void {
       username      TEXT NOT NULL,
       password_hash TEXT NOT NULL,
       is_active     INTEGER NOT NULL DEFAULT 1,
+      is_admin      INTEGER NOT NULL DEFAULT 0,
       created_at    TEXT NOT NULL,
       updated_at    TEXT NOT NULL
     );
@@ -214,6 +215,14 @@ function applySchema(db: Database.Database): void {
       FOREIGN KEY (calendar_id) REFERENCES calendars (calendar_id) ON DELETE CASCADE
     );
   `);
+
+  // Backward-compatible migration for existing databases created before is_admin.
+  const hasIsAdmin = db
+    .prepare("SELECT 1 FROM pragma_table_info('users') WHERE name = 'is_admin' LIMIT 1")
+    .get() as { 1: number } | undefined;
+  if (!hasIsAdmin) {
+    db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
+  }
 }
 
 // ── Read ─────────────────────────────────────────────────────────────────────
@@ -235,10 +244,10 @@ export function readStorageSync(db: Database.Database): StorageData {
     catch { preferences[row.key] = row.value; }
   }
 
-  // users (is_active stored as 0/1)
-  type UserRow = Omit<StoredUser, 'is_active'> & { is_active: number };
+  // users (boolean flags stored as 0/1)
+  type UserRow = Omit<StoredUser, 'is_active' | 'is_admin'> & { is_active: number; is_admin: number };
   const users: StoredUser[] = (db.prepare('SELECT * FROM users').all() as UserRow[])
-    .map(r => ({ ...r, is_active: Boolean(r.is_active) }));
+    .map(r => ({ ...r, is_active: Boolean(r.is_active), is_admin: Boolean(r.is_admin) }));
 
   // channels + read_state
   type ChannelRow = Omit<StoredWorkspaceChannel, 'read_state'>;
@@ -396,11 +405,13 @@ export function writeStorageSync(db: Database.Database, data: StorageData): void
     // users
     const insUser = db.prepare(`
       INSERT INTO users
-        (user_id, workspace_id, username, password_hash, is_active, created_at, updated_at)
+        (user_id, workspace_id, username, password_hash, is_active, is_admin, created_at, updated_at)
       VALUES
-        (@user_id, @workspace_id, @username, @password_hash, @is_active, @created_at, @updated_at)
+        (@user_id, @workspace_id, @username, @password_hash, @is_active, @is_admin, @created_at, @updated_at)
     `);
-    for (const u of data.users) insUser.run({ ...u, is_active: u.is_active ? 1 : 0 });
+    for (const u of data.users) {
+      insUser.run({ ...u, is_active: u.is_active ? 1 : 0, is_admin: u.is_admin ? 1 : 0 });
+    }
 
     // channels + read_state
     const insChan = db.prepare(`

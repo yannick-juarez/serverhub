@@ -1,8 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { HiOutlineSparkles, HiOutlineSquares2X2, HiOutlineWrenchScrewdriver } from "react-icons/hi2";
 import { apps } from "../../apps";
 import useDocumentTitle from "../../hooks/useDocumentTitle";
+import { getPreferences, type PreferencesResponse } from "../../api/settings";
+import { getAppEnabledMap, getAppVisibilityMap, isAppEnabled, isAppVisible } from "./preferences";
 
 type MarketplaceEntry = {
   id: string;
@@ -48,11 +50,40 @@ export default function ApplicationsPage() {
 
   const [activeTab, setActiveTab] = useState<"launchpad" | "marketplace">("launchpad");
   const [installedPlugins, setInstalledPlugins] = useState<Record<string, boolean>>({});
+  const [preferences, setPreferences] = useState<PreferencesResponse | null>(null);
 
-  const launchpadApps = useMemo(
-    () => apps.filter((item) => !item.isInternal).sort((a, b) => a.label.localeCompare(b.label)),
-    [],
-  );
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadPreferences = async () => {
+      try {
+        const data = await getPreferences();
+        if (!cancelled) {
+          setPreferences(data);
+        }
+      } catch {
+        if (!cancelled) {
+          setPreferences(null);
+        }
+      }
+    };
+
+    void loadPreferences();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const launchpadApps = useMemo(() => {
+    const visibilityMap = getAppVisibilityMap(preferences);
+    const enabledMap = getAppEnabledMap(preferences);
+
+    return apps
+      .filter((item) => !item.isInternal)
+      .filter((item) => isAppVisible(item.id, visibilityMap) && isAppEnabled(item.id, enabledMap))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [preferences]);
 
   const installPlugin = (pluginId: string) => {
     setInstalledPlugins((previous) => ({ ...previous, [pluginId]: true }));

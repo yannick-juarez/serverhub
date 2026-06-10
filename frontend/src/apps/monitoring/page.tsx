@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, useId } from "react";
 import {
   CpuChipIcon,
   ServerStackIcon,
@@ -19,6 +19,7 @@ import {
 } from "../../api/monitoring";
 
 const REFRESH_INTERVAL = 5000;
+const HISTORY_POINTS = 36;
 
 const LIMIT_OPTIONS: { label: string; value: number }[] = [
   { label: "5", value: 5 },
@@ -57,6 +58,87 @@ function loadBarColor(pct: number, defaultColor = "slate"): string {
   if (pct > 85) return "rose";
   if (pct > 60) return "orange";
   return defaultColor;
+}
+
+function pushHistory(prev: number[], next: number): number[] {
+  const value = Number.isFinite(next) ? next : 0;
+  return [...prev, value].slice(-HISTORY_POINTS);
+}
+
+function TrendGraph({
+  values,
+  color,
+  mode = "percent",
+}: {
+  values: number[];
+  color: "cyan" | "emerald" | "blue" | "violet";
+  mode?: "percent" | "auto";
+}) {
+  const width = 100;
+  const height = 38;
+  const gradientId = useId();
+  const hasData = values.length > 1;
+  const maxValue = mode === "percent"
+    ? 100
+    : Math.max(1, ...values.map((v) => (Number.isFinite(v) && v > 0 ? v : 0)));
+  const minValue = 0;
+  const range = Math.max(1, maxValue - minValue);
+
+  const points = hasData
+    ? values
+        .map((value, idx) => {
+          const safe = Number.isFinite(value) ? value : 0;
+          const x = (idx / (values.length - 1)) * width;
+          const y = height - ((safe - minValue) / range) * height;
+          return `${x},${Math.min(height, Math.max(0, y))}`;
+        })
+        .join(" ")
+    : "";
+
+  const pointList = hasData ? points.split(" ") : [];
+  const firstPoint = hasData ? pointList[0] : "";
+  const lastPoint = hasData ? pointList[pointList.length - 1] : "";
+  const area = hasData
+    ? `M0,${height} L${firstPoint} ${points
+        .split(" ")
+        .map((p) => `L${p}`)
+        .join(" ")} L${lastPoint.split(",")[0]},${height} Z`
+    : "";
+
+  const tone: Record<string, { line: string; fill: string; stop: string; base: string }> = {
+    cyan: { line: "stroke-cyan-300/55", fill: "fill-cyan-400/10", stop: "#22d3ee", base: "stroke-cyan-900/35" },
+    emerald: { line: "stroke-emerald-300/55", fill: "fill-emerald-400/10", stop: "#34d399", base: "stroke-emerald-900/35" },
+    blue: { line: "stroke-blue-300/55", fill: "fill-blue-400/10", stop: "#60a5fa", base: "stroke-blue-900/35" },
+    violet: { line: "stroke-violet-300/55", fill: "fill-violet-400/10", stop: "#a78bfa", base: "stroke-violet-900/35" },
+  };
+
+  const palette = tone[color];
+
+  return (
+    <div className="h-full w-full">
+      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="h-full w-full">
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={palette.stop} stopOpacity="0.24" />
+            <stop offset="100%" stopColor={palette.stop} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={`M0,${height} L${width},${height}`} className={palette.base} strokeWidth="0.8" />
+        {hasData && (
+          <>
+            <path d={area} className={palette.fill} fill={`url(#${gradientId})`} />
+            <polyline
+              points={points}
+              className={`${palette.line} fill-none`}
+              strokeWidth="1.2"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          </>
+        )}
+      </svg>
+    </div>
+  );
 }
 
 function LoadBar({ percent, color = "slate" }: { percent: number; color?: string }) {
@@ -117,23 +199,35 @@ function Card({
   icon,
   title,
   headerRight,
+  trend,
   children,
 }: {
   icon: React.ReactNode;
   title: string;
   headerRight?: React.ReactNode;
+  trend?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-gray-700/10 backdrop-blur-md p-3 flex flex-col gap-2.5">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-white/70">
-          <span className="w-3.5 h-3.5 shrink-0">{icon}</span>
-          <h2 className="text-[11px] font-semibold uppercase tracking-widest">{title}</h2>
+    <div className="relative overflow-hidden rounded-xl border border-white/10 bg-gray-700/10 backdrop-blur-md p-3">
+      {trend && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 top-1/3 opacity-95">
+          <div className="h-full w-full bg-slate-950/30" />
+          <div className="absolute inset-0 p-1.5">
+            {trend}
+          </div>
         </div>
-        {headerRight}
+      )}
+      <div className="relative z-10">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-white/70">
+            <span className="w-3.5 h-3.5 shrink-0">{icon}</span>
+            <h2 className="text-[11px] font-semibold uppercase tracking-widest">{title}</h2>
+          </div>
+          {headerRight}
+        </div>
+        <div className="pt-2">{children}</div>
       </div>
-      {children}
     </div>
   );
 }
@@ -156,6 +250,10 @@ export default function MonitoringPage() {
   const [coresOpen, setCoresOpen] = useState(false);
   const [wipingRam, setWipingRam] = useState(false);
   const [wipeResult, setWipeResult] = useState<string | null>(null);
+  const [cpuHistory, setCpuHistory] = useState<number[]>([]);
+  const [ramHistory, setRamHistory] = useState<number[]>([]);
+  const [diskHistory, setDiskHistory] = useState<number[]>([]);
+  const [networkHistory, setNetworkHistory] = useState<number[]>([]);
 
   const fetchAll = useCallback(async (showSpinner = false) => {
     if (showSpinner) setRefreshing(true);
@@ -164,6 +262,23 @@ export default function MonitoringPage() {
       setOverview(data.overview);
       setCpuLoad(data.cpuLoad);
       setProcesses(data.processes);
+
+      const nextCpu = data.overview.cpu.loadPercent;
+      const nextRam = data.overview.memory.total > 0
+        ? (data.overview.memory.used / data.overview.memory.total) * 100
+        : 0;
+      const nextDisk = data.overview.disks.length > 0
+        ? data.overview.disks.reduce((sum, disk) => sum + disk.use, 0) / data.overview.disks.length
+        : 0;
+      const nextNetwork = data.overview.network
+        .filter((n) => n.iface !== "lo")
+        .reduce((sum, n) => sum + Math.max(0, n.rxSec) + Math.max(0, n.txSec), 0);
+
+      setCpuHistory((prev) => pushHistory(prev, nextCpu));
+      setRamHistory((prev) => pushHistory(prev, nextRam));
+      setDiskHistory((prev) => pushHistory(prev, nextDisk));
+      setNetworkHistory((prev) => pushHistory(prev, nextNetwork));
+
       setLastUpdated(new Date());
       setError(null);
     } catch (err) {
@@ -264,7 +379,11 @@ export default function MonitoringPage() {
               {/* Row 1 – CPU + Memory + Disks + Network */}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 {/* CPU Overview */}
-                <Card icon={<CpuChipIcon />} title="CPU">
+                <Card
+                  icon={<CpuChipIcon />}
+                  title="CPU"
+                  trend={<TrendGraph values={cpuHistory} color="cyan" mode="percent" />}
+                >
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-xs text-white/80 truncate">
                       {overview.cpu.manufacturer} {overview.cpu.brand}
@@ -298,6 +417,7 @@ export default function MonitoringPage() {
                 <Card
                   icon={<CircleStackIcon />}
                   title="Memory"
+                  trend={<TrendGraph values={ramHistory} color="emerald" mode="percent" />}
                   headerRight={
                     <button
                       disabled={wipingRam}
@@ -344,7 +464,11 @@ export default function MonitoringPage() {
                 </Card>
 
                 {/* Disks */}
-                <Card icon={<CircleStackIcon />} title="Disks">
+                <Card
+                  icon={<CircleStackIcon />}
+                  title="Disks"
+                  trend={<TrendGraph values={diskHistory} color="blue" mode="percent" />}
+                >
                   <div className="flex flex-col gap-2.5">
                     {overview.disks.map((disk) => (
                       <div key={disk.mount}>
@@ -362,7 +486,11 @@ export default function MonitoringPage() {
                 </Card>
 
                 {/* Network */}
-                <Card icon={<SignalIcon />} title="Network">
+                <Card
+                  icon={<SignalIcon />}
+                  title="Network"
+                  trend={<TrendGraph values={networkHistory} color="violet" mode="auto" />}
+                >
                   <div className="flex flex-col gap-2">
                     {overview.network.filter((n) => n.iface !== "lo").map((n) => (
                       <div key={n.iface}>

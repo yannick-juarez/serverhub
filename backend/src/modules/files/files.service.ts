@@ -1,6 +1,8 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { randomUUID } from 'crypto';
+import { spawn } from 'child_process';
 import { config } from '../../config/env';
 import type { FileEntry } from '../../types';
 import { readStorage } from '../storage/storage.service';
@@ -58,8 +60,85 @@ async function resolveSafe(inputPath: string): Promise<string> {
   return resolved;
 }
 
+function runTar(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('tar', args, { stdio: 'ignore' });
+
+    child.on('error', (error) => {
+      reject(error);
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`tar exited with code ${code ?? -1}`));
+    });
+  });
+}
+
+function validatePermissionsInput(permissions: string): number {
+  const trimmed = permissions.trim();
+  if (!/^[0-7]{3,4}$/.test(trimmed)) {
+    throw new Error('permissions must be an octal string like 644 or 755');
+  }
+  const parsed = Number.parseInt(trimmed, 8);
+  if (!Number.isFinite(parsed)) {
+    throw new Error('invalid permissions value');
+  }
+  return parsed;
+}
+
+function sanitizeArchiveName(input?: string): string {
+  const raw = (input ?? '').trim();
+  const cleaned = raw
+    .replace(/\.tar\.gz$/i, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  if (!cleaned) {
+    return `archive-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  }
+
+  return cleaned;
+}
+
+async function resolveAndValidateEntries(relativePaths: string[]): Promise<{ resolvedPath: string; name: string; parent: string }[]> {
+  if (!Array.isArray(relativePaths) || relativePaths.length === 0) {
+    throw new Error('paths must be a non-empty array');
+  }
+
+  const resolved = await Promise.all(
+    relativePaths.map(async (entryPath) => {
+      if (typeof entryPath !== 'string' || !entryPath.trim()) {
+        throw new Error('each path must be a non-empty string');
+      }
+      const resolvedPath = await resolveSafe(entryPath);
+      const name = path.basename(resolvedPath);
+      const parent = path.dirname(resolvedPath);
+      return { resolvedPath, name, parent };
+    }),
+  );
+
+  const firstParent = resolved[0]?.parent;
+  if (!firstParent) {
+    throw new Error('unable to resolve selected paths');
+  }
+
+  if (!resolved.every((entry) => entry.parent === firstParent)) {
+    throw new Error('all selected paths must be in the same directory');
+  }
+
+  return resolved;
+}
+
 export async function getFilesRoot(): Promise<string> {
   return path.resolve(await getEffectiveFilesRoot());
+}
+
+export async function resolveFilePath(relativePath: string): Promise<string> {
+  return resolveSafe(relativePath);
 }
 
 export async function listDirectory(relativePath: string): Promise<FileEntry[]> {
@@ -87,13 +166,19 @@ export async function listDirectory(relativePath: string): Promise<FileEntry[]> 
   });
 }
 
-export async function readFile(relativePath: string): Promise<{ content: string; encoding: string }> {
+export async function readFile(relativePath: string, maxBytes?: number): Promise<{ content: string; encoding: string }> {
   const file = await resolveSafe(relativePath);
   const stat = await fs.stat(file);
 
-  // Refuse les fichiers > 2 Mo pour éviter les OOM
-  if (stat.size > 2 * 1024 * 1024) {
-    throw new Error('File is too large to preview (> 2 MB)');
+  const defaultMaxBytes = 2 * 1024 * 1024;
+  const upperBoundBytes = 300 * 1024 * 1024;
+  const requestedMax = typeof maxBytes === 'number' && Number.isFinite(maxBytes)
+    ? Math.floor(maxBytes)
+    : defaultMaxBytes;
+  const effectiveMax = Math.min(Math.max(requestedMax, 1), upperBoundBytes);
+
+  if (stat.size > effectiveMax) {
+    throw new Error(`File is too large to preview (> ${Math.floor(effectiveMax / (1024 * 1024))} MB)`);
   }
 
   const content = await fs.readFile(file, 'utf-8');
@@ -115,6 +200,12 @@ export async function deleteEntry(relativePath: string): Promise<void> {
   }
 }
 
+export async function deleteEntries(relativePaths: string[]): Promise<void> {
+  for (const entryPath of relativePaths) {
+    await deleteEntry(entryPath);
+  }
+}
+
 export async function renameEntry(relativePath: string, newName: string): Promise<void> {
   const entry = await resolveSafe(relativePath);
   const destinationRelative = path.posix.join(path.posix.dirname(relativePath), newName);
@@ -125,4 +216,46 @@ export async function renameEntry(relativePath: string, newName: string): Promis
 export async function createDirectory(relativePath: string): Promise<void> {
   const dir = await resolveSafe(relativePath);
   await fs.mkdir(dir, { recursive: true });
+}
+
+export async function setEntryPermissions(relativePath: string, permissions: string): Promise<void> {
+  const entry = await resolveSafe(relativePath);
+  const mode = validatePermissionsInput(permissions);
+  await fs.chmod(entry, mode);
+}
+
+export async function setEntriesPermissions(relativePaths: string[], permissions: string): Promise<void> {
+  const mode = validatePermissionsInput(permissions);
+  for (const entryPath of relativePaths) {
+    const entry = await resolveSafe(entryPath);
+    await fs.chmod(entry, mode);
+  }
+}
+
+export async function compressEntries(relativePaths: string[], archiveName?: string): Promise<string> {
+  const entries = await resolveAndValidateEntries(relativePaths);
+  const parentDir = entries[0].parent;
+  const safeName = sanitizeArchiveName(archiveName);
+  const archivePath = path.join(parentDir, `${safeName}.tar.gz`);
+
+  await runTar(['-czf', archivePath, '-C', parentDir, ...entries.map((entry) => entry.name)]);
+  return archivePath.replace(/\\/g, '/');
+}
+
+export async function buildArchiveForDownload(
+  relativePaths: string[],
+  archiveName?: string,
+): Promise<{ archivePath: string; fileName: string; cleanupDir: string }> {
+  const entries = await resolveAndValidateEntries(relativePaths);
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'serverhub-files-'));
+  const safeName = sanitizeArchiveName(archiveName || `download-${randomUUID().slice(0, 8)}`);
+  const archivePath = path.join(tempDir, `${safeName}.tar.gz`);
+
+  await runTar(['-czf', archivePath, '-C', entries[0].parent, ...entries.map((entry) => entry.name)]);
+
+  return {
+    archivePath,
+    fileName: path.basename(archivePath),
+    cleanupDir: tempDir,
+  };
 }

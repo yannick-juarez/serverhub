@@ -4,6 +4,7 @@ import {
   deleteUser,
   listUsers,
   renameUser,
+  updateUserRole,
   updateUserPassword,
   updateUserStatus,
 } from './users.service';
@@ -86,6 +87,25 @@ export async function handleRenameUser(req: Request, res: Response): Promise<voi
     res.json({ success: true, data });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'unable to rename user';
+    res.status(400).json({ success: false, error: message });
+  }
+}
+
+export async function handleUpdateRole(req: Request, res: Response): Promise<void> {
+  try {
+    const username = req.params.username;
+    const { is_admin: isAdmin } = req.body as { is_admin?: boolean };
+    const actorUsername = req.user?.username ?? '';
+
+    if (typeof isAdmin !== 'boolean') {
+      res.status(400).json({ success: false, error: 'is_admin boolean is required' });
+      return;
+    }
+
+    const data = await updateUserRole(username, isAdmin, actorUsername);
+    res.json({ success: true, data });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unable to update role';
     res.status(400).json({ success: false, error: message });
   }
 }

@@ -9,12 +9,14 @@ export type SettingsUser = {
   user_id: string;
   username: string;
   is_active: boolean;
+  is_admin: boolean;
   created_at: string;
   updated_at: string;
 };
 
 export type MeResponse = {
   username: string;
+  is_admin: boolean;
 };
 
 export type SettingsDbConnection = {
@@ -52,6 +54,44 @@ export type UpdateInstallResponse = {
   repositoryRoot: string;
 };
 
+export type SystemScriptResult = {
+  command: string;
+  cwd: string;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+};
+
+export type SystemBuildStartResponse = {
+  command: string;
+  cwd: string;
+  pid: number;
+  started: true;
+};
+
+export type SystemSettingsResponse = {
+  workspaceRoot: string;
+  scripts: {
+    build: string;
+    install: string;
+  };
+  domains: {
+    configured: string[];
+    preferred: string[];
+    email: string;
+    appPort: number;
+  };
+};
+
+export type SystemApplyDomainsResponse = {
+  domains: string[];
+  siteFile: string;
+  certificate: {
+    attempted: boolean;
+    success: boolean;
+  };
+};
+
 export async function getPreferences(): Promise<PreferencesResponse> {
   return apiRequest<PreferencesResponse>("/preferences");
 }
@@ -85,6 +125,13 @@ export async function updateUserStatus(username: string, is_active: boolean): Pr
   return apiRequest<SettingsUser>(`/users/${encodeURIComponent(username)}`, {
     method: "PATCH",
     body: { is_active },
+  });
+}
+
+export async function updateUserRole(username: string, is_admin: boolean): Promise<SettingsUser> {
+  return apiRequest<SettingsUser>(`/users/${encodeURIComponent(username)}/role`, {
+    method: "PATCH",
+    body: { is_admin },
   });
 }
 
@@ -127,5 +174,50 @@ export async function checkPlatformUpdates(): Promise<UpdateCheckResponse> {
 export async function installPlatformUpdate(): Promise<UpdateInstallResponse> {
   return apiRequest<UpdateInstallResponse>("/updates/install", {
     method: "POST",
+  });
+}
+
+export async function getSystemSettings(): Promise<SystemSettingsResponse> {
+  return apiRequest<SystemSettingsResponse>("/system/settings");
+}
+
+export async function patchSystemSettings(payload: {
+  domains?: string[];
+  email?: string;
+  appPort?: number;
+}): Promise<SystemSettingsResponse> {
+  return apiRequest<SystemSettingsResponse>("/system/settings", {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export async function runSystemBuild(): Promise<SystemBuildStartResponse> {
+  return apiRequest<SystemBuildStartResponse>("/system/build", {
+    method: "POST",
+  });
+}
+
+export async function runSystemInstall(payload: {
+  domains?: string[];
+  email?: string;
+  appPort?: number;
+}): Promise<SystemBuildStartResponse> {
+  return apiRequest<SystemBuildStartResponse>("/system/install", {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export async function applySystemDomains(payload: {
+  domains: string[];
+  email?: string;
+  appPort?: number;
+  requestCertificate?: boolean;
+  autoInstallPackages?: boolean;
+}): Promise<SystemApplyDomainsResponse> {
+  return apiRequest<SystemApplyDomainsResponse>("/system/domains/apply", {
+    method: "POST",
+    body: payload,
   });
 }

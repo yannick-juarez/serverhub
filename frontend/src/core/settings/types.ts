@@ -2,6 +2,8 @@ import type { ComponentType } from "react";
 import type { IconType } from "react-icons";
 import type { AppColor } from "../../apps/types";
 
+export type SettingsSectionGroup = "system" | "apps";
+
 export type SettingsSectionDefinition = {
   key: string;
   label: string;
@@ -10,4 +12,5 @@ export type SettingsSectionDefinition = {
   icon?: IconType;
   color?: AppColor;
   order?: number;
+  group?: SettingsSectionGroup;
 };

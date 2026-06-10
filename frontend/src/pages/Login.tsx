@@ -8,7 +8,6 @@ import "leaflet/dist/leaflet.css";
 import Input from "../components/Input";
 import useDocumentTitle from "../hooks/useDocumentTitle";
 import Polarstar from "../components/Polarstar";
-import toast, { Toaster } from "react-hot-toast";
 import { apiUrl } from "../config/api";
 
 const Login = () => {
@@ -82,17 +81,13 @@ const Login = () => {
 
         if (status >= 400 && status < 500) {
           setError("Invalid username or password");
-          toast.error("Invalid username or password");
         } else if (status >= 500) {
           setError("Server error. Please try again later.");
-          toast.error("Server error. Please try again later.");
         } else {
           setError("Login failed. Please try again.");
-          toast.error("An unexpected error occurred. Please try again.");
         }
       } else {
         setError("Login failed. Please try again.");
-        toast.error("An unexpected error occurred. Please try again.");
       }
 
       console.error(err);
@@ -101,7 +96,6 @@ const Login = () => {
 
   return (
     <div className="relative min-h-screen flex flex-col items-center justify-center bg-black text-white font-sans">
-      <Toaster position="top-right" reverseOrder={false} containerClassName="mt-12" />
       <div className="absolute inset-0" style={{
         backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.12) 1px, transparent 1px)",
         backgroundSize: "26px 26px",

@@ -13,6 +13,7 @@ import { usersRouter } from '../modules/users/users.routes';
 import { messagesRouter } from '../modules/messages/messages.routes';
 import { calendarRouter } from '../modules/calendar/calendar.routes';
 import { updatesRouter } from '../modules/updates/updates.routes';
+import { systemRouter } from '../modules/system/system.routes';
 
 const router = Router();
 
@@ -30,5 +31,6 @@ router.use('/users', usersRouter);
 router.use('/messages', messagesRouter);
 router.use('/calendar', calendarRouter);
 router.use('/updates', updatesRouter);
+router.use('/system', systemRouter);
 
 export { router };

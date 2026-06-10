@@ -2,6 +2,26 @@ import { useEffect, useMemo, useState } from "react";
 import { HiOutlineCog6Tooth } from "react-icons/hi2";
 import { useNavigate, useParams } from "react-router-dom";
 import { getSettingsSections } from "./registry";
+import type { SettingsSectionDefinition, SettingsSectionGroup } from "./types";
+
+const GROUP_LABELS: Record<SettingsSectionGroup, string> = {
+  system: "System",
+  apps: "Apps",
+};
+
+function groupSectionsByType(items: SettingsSectionDefinition[]) {
+  const grouped: Record<SettingsSectionGroup, SettingsSectionDefinition[]> = {
+    system: [],
+    apps: [],
+  };
+
+  for (const item of items) {
+    const group = item.group ?? "system";
+    grouped[group].push(item);
+  }
+
+  return grouped;
+}
 
 export default function SettingsPage() {
   const navigate = useNavigate();
@@ -22,6 +42,12 @@ export default function SettingsPage() {
       return haystack.includes(query);
     });
   }, [search, sections]);
+
+  const groupedFilteredSections = useMemo(
+    () => groupSectionsByType(filteredSections),
+    [filteredSections],
+  );
+  const groupedAllSections = useMemo(() => groupSectionsByType(sections), [sections]);
 
   useEffect(() => {
     if (!sections.length) return;
@@ -71,41 +97,63 @@ export default function SettingsPage() {
                     placeholder="Search categories"
                   />
                 </div>
-                <nav className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible">
-                  {filteredSections.map((item) => {
-                    const isActive = activeSection?.key === item.key;
-                    const ItemIcon = item.icon ?? HiOutlineCog6Tooth;
-                    const itemColor = item.color;
+                <nav className="space-y-3 overflow-y-auto pb-1">
+                  {(["system", "apps"] as SettingsSectionGroup[]).map((group) => {
+                    const list = groupedFilteredSections[group];
+                    const hasAnyInGroup = groupedAllSections[group].length > 0;
+
                     return (
-                      <button
-                        key={item.key}
-                        className={`min-w-[165px] rounded-md border px-2 py-1.5 text-left transition lg:min-w-0 ${
-                          isActive
-                            ? "border-white/10 bg-white/5 text-white"
-                            : "border-transparent text-slate-300 hover:bg-white/5 hover:text-white"
-                        }`}
-                        onClick={() => navigate(`/settings/${item.key}`)}
-                        aria-current={isActive ? "page" : undefined}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${
-                              isActive
-                                ? itemColor
-                                  ? `${itemColor.background} text-white`
-                                  : "bg-white/15 text-white"
-                                : itemColor
-                                  ? `${itemColor.idle.background} text-white/90`
-                                  : "bg-white/5 text-slate-300"
-                            }`}
-                          >
-                            <ItemIcon className="h-3.5 w-3.5" />
-                          </span>
-                          <p className="text-sm font-medium leading-tight">{item.label}</p>
+                      <div key={group}>
+                        <p className="mb-1 px-2 text-[11px] uppercase tracking-wide text-slate-500">{GROUP_LABELS[group]}</p>
+                        <div className="flex gap-1 overflow-x-auto px-1 lg:flex-col lg:overflow-visible">
+                          {list.map((item) => {
+                            const isActive = activeSection?.key === item.key;
+                            const ItemIcon = item.icon ?? HiOutlineCog6Tooth;
+                            const itemColor = item.color;
+                            return (
+                              <button
+                                key={item.key}
+                                className={`min-w-[165px] rounded-md border px-2 py-1.5 text-left transition lg:min-w-0 ${
+                                  isActive
+                                    ? "border-white/10 bg-white/5 text-white"
+                                    : "border-transparent text-slate-300 hover:bg-white/5 hover:text-white"
+                                }`}
+                                onClick={() => navigate(`/settings/${item.key}`)}
+                                aria-current={isActive ? "page" : undefined}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span
+                                    className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${
+                                      isActive
+                                        ? itemColor
+                                          ? `${itemColor.background} text-white`
+                                          : "bg-white/15 text-white"
+                                        : itemColor
+                                          ? `${itemColor.idle.background} text-white/90`
+                                          : "bg-white/5 text-slate-300"
+                                    }`}
+                                  >
+                                    <ItemIcon className="h-3.5 w-3.5" />
+                                  </span>
+                                  <p className="text-sm font-medium leading-tight">{item.label}</p>
+                                </div>
+                              </button>
+                            );
+                          })}
+                          {!list.length && group === "apps" ? (
+                            <div className="rounded-md border border-white/10 bg-white/5 px-2 py-2 text-xs text-slate-400">
+                              {hasAnyInGroup
+                                ? search.trim()
+                                  ? "No app settings match your search."
+                                  : "No app settings available."
+                                : "No app settings available."}
+                            </div>
+                          ) : null}
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
+
                   {!filteredSections.length ? (
                     <div className="rounded-md border border-white/10 bg-white/5 px-2 py-2 text-xs text-slate-400">
                       No matching categories.

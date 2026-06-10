@@ -7,6 +7,7 @@ export interface ApiResponse<T = unknown> {
 
 export interface AuthPayload {
   username: string;
+  is_admin?: boolean;
   iat?: number;
   exp?: number;
 }

@@ -21,6 +21,52 @@ SERVICE_NAME="serverhub"
 NODE_MIN_VERSION=22
 NODE_DISTRO_VERSION="22.16.0"
 NGINX_SITE_NAME="serverhub"
+NON_INTERACTIVE=0
+DOMAINS_CSV=""
+LETSENCRYPT_EMAIL=""
+APP_PORT_OVERRIDE=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --non-interactive)
+      NON_INTERACTIVE=1
+      shift
+      ;;
+    --domains)
+      DOMAINS_CSV="${2:-}"
+      shift 2
+      ;;
+    --domains=*)
+      DOMAINS_CSV="${1#*=}"
+      shift
+      ;;
+    --email)
+      LETSENCRYPT_EMAIL="${2:-}"
+      shift 2
+      ;;
+    --email=*)
+      LETSENCRYPT_EMAIL="${1#*=}"
+      shift
+      ;;
+    --app-port)
+      APP_PORT_OVERRIDE="${2:-}"
+      shift 2
+      ;;
+    --app-port=*)
+      APP_PORT_OVERRIDE="${1#*=}"
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Supported options:"
+      echo "  --non-interactive"
+      echo "  --domains=admin.example.com,hub.example.com"
+      echo "  --email=ops@example.com"
+      echo "  --app-port=8080"
+      exit 1
+      ;;
+  esac
+done
 
 get_node_major_version() {
   if ! command -v node &>/dev/null; then
@@ -197,17 +243,20 @@ install_nginx_and_certbot() {
 }
 
 configure_nginx_site() {
-  local domain="$1"
+  local domains_csv="$1"
   local port="$2"
   local site_file="/etc/nginx/sites-available/${NGINX_SITE_NAME}.conf"
   local site_link="/etc/nginx/sites-enabled/${NGINX_SITE_NAME}.conf"
+  local server_names
 
-  echo "→ Creating nginx site for ${domain}..."
+  server_names="${domains_csv//,/ }"
+
+  echo "→ Creating nginx site for ${server_names}..."
   cat > "$site_file" <<EOF
 server {
     listen 80;
     listen [::]:80;
-    server_name ${domain};
+    server_name ${server_names};
 
     location / {
         proxy_pass http://127.0.0.1:${port};
@@ -266,7 +315,9 @@ detect_existing_https_domain() {
 
 setup_domain_and_tls() {
   local app_port="$1"
-  local server_ip domain email dns_ip certbot_cmd existing_domain
+  local server_ip email dns_ip certbot_cmd existing_domain
+  local domain_input domain normalized domains_csv primary_domain
+  local -a domains=()
 
   if existing_domain="$(detect_existing_https_domain)"; then
     echo "→ Existing nginx + HTTPS configuration detected for ${existing_domain}."
@@ -274,43 +325,87 @@ setup_domain_and_tls() {
     return
   fi
 
-  echo ""
-  echo "Do you want to configure a domain with nginx + HTTPS now? [y/N]"
-  read -r domain_choice
+  if [[ -n "${DOMAINS_CSV//[[:space:]]/}" ]]; then
+    domain_input="$DOMAINS_CSV"
+  elif [[ "$NON_INTERACTIVE" -eq 1 ]]; then
+    echo "→ Non-interactive mode with no --domains provided: skipping nginx + certbot setup."
+    return
+  else
+    echo ""
+    echo "Do you want to configure a domain with nginx + HTTPS now? [y/N]"
+    read -r domain_choice
 
-  case "${domain_choice,,}" in
-    y|yes)
-      ;;
-    *)
-      echo "→ Skipping nginx + certbot setup."
-      return
-      ;;
-  esac
+    case "${domain_choice,,}" in
+      y|yes)
+        ;;
+      *)
+        echo "→ Skipping nginx + certbot setup."
+        return
+        ;;
+    esac
 
-  echo "Enter the domain name to use (example: admin.example.com):"
-  read -r domain
-  if [[ -z "${domain//[[:space:]]/}" ]]; then
+    echo "Enter domain(s) to use (comma-separated, example: admin.example.com,hub.example.com):"
+    read -r domain_input
+  fi
+
+  if [[ -z "${domain_input//[[:space:]]/}" ]]; then
     echo "No domain provided. Skipping nginx + certbot setup."
     return
   fi
 
-  install_nginx_and_certbot
-  configure_nginx_site "$domain" "$app_port"
+  IFS=',' read -r -a raw_domains <<< "$domain_input"
+  for domain in "${raw_domains[@]}"; do
+    normalized="$(echo "$domain" | tr '[:upper:]' '[:lower:]' | xargs)"
+    [[ -z "$normalized" ]] && continue
+    if [[ "$normalized" =~ [[:space:]] ]]; then
+      continue
+    fi
+    if [[ ! "$normalized" =~ ^[a-z0-9.-]+$ || "$normalized" == .* || "$normalized" == *. || "$normalized" != *.* ]]; then
+      echo "Warning: ignoring invalid domain '${domain}'."
+      continue
+    fi
+    domains+=("$normalized")
+  done
 
-  server_ip="$(hostname -I | awk '{print $1}')"
-  dns_ip="$(getent ahostsv4 "$domain" 2>/dev/null | awk 'NR==1 {print $1}')"
-
-  if [[ -n "$dns_ip" && -n "$server_ip" && "$dns_ip" != "$server_ip" ]]; then
-    echo "Warning: ${domain} resolves to ${dns_ip}, but this server IP is ${server_ip}."
-    echo "HTTPS issuance may fail until DNS points to this server."
-    echo "Press Enter to continue anyway, or Ctrl+C to cancel."
-    read -r
+  if [[ "${#domains[@]}" -eq 0 ]]; then
+    echo "No valid domain provided. Skipping nginx + certbot setup."
+    return
   fi
 
-  echo "Enter an email for Let's Encrypt notices (leave empty to skip email):"
-  read -r email
+  domains=( $(printf "%s\n" "${domains[@]}" | awk '!seen[$0]++') )
+  domains_csv="$(IFS=','; echo "${domains[*]}")"
+  primary_domain="${domains[0]}"
 
-  certbot_cmd=(certbot --nginx -d "$domain" --redirect --agree-tos -n)
+  install_nginx_and_certbot
+  configure_nginx_site "$domains_csv" "$app_port"
+
+  server_ip="$(hostname -I | awk '{print $1}')"
+  for domain in "${domains[@]}"; do
+    dns_ip="$(getent ahostsv4 "$domain" 2>/dev/null | awk 'NR==1 {print $1}')"
+
+    if [[ -n "$dns_ip" && -n "$server_ip" && "$dns_ip" != "$server_ip" ]]; then
+      echo "Warning: ${domain} resolves to ${dns_ip}, but this server IP is ${server_ip}."
+      echo "HTTPS issuance may fail until DNS points to this server."
+      if [[ "$NON_INTERACTIVE" -eq 0 ]]; then
+        echo "Press Enter to continue anyway, or Ctrl+C to cancel."
+        read -r
+      fi
+    fi
+  done
+
+  if [[ -n "${LETSENCRYPT_EMAIL//[[:space:]]/}" ]]; then
+    email="$LETSENCRYPT_EMAIL"
+  elif [[ "$NON_INTERACTIVE" -eq 1 ]]; then
+    email=""
+  else
+    echo "Enter an email for Let's Encrypt notices (leave empty to skip email):"
+    read -r email
+  fi
+
+  certbot_cmd=(certbot --nginx --redirect --agree-tos -n --expand --cert-name "${primary_domain}")
+  for domain in "${domains[@]}"; do
+    certbot_cmd+=( -d "$domain" )
+  done
   if [[ -n "${email//[[:space:]]/}" ]]; then
     certbot_cmd+=( -m "$email" )
   else
@@ -321,12 +416,12 @@ setup_domain_and_tls() {
   if ! "${certbot_cmd[@]}"; then
     echo "Certbot failed."
     echo "You can retry manually once DNS is ready:"
-    echo "  certbot --nginx -d ${domain} --redirect"
+    echo "  certbot --nginx -d ${primary_domain} --redirect"
     return
   fi
 
   systemctl reload nginx
-  echo "✓ Domain configured with HTTPS: https://${domain}"
+  echo "✓ Domain configured with HTTPS: https://${primary_domain}"
 }
 
 # ── Internet access for npm ──────────────────────────────────────────────────
@@ -500,6 +595,9 @@ systemctl restart "$SERVICE_NAME"
 
 # ── Result ───────────────────────────────────────────────────────────────────
 PORT=$(grep "^PORT=" "$ENV_FILE" | cut -d= -f2 || echo "8080")
+if [[ -n "${APP_PORT_OVERRIDE//[[:space:]]/}" ]]; then
+  PORT="$APP_PORT_OVERRIDE"
+fi
 SERVER_IP=$(hostname -I | awk '{print $1}')
 
 setup_domain_and_tls "$PORT"

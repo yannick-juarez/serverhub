@@ -1,8 +1,7 @@
 // Header.tsx
-import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import HeaderProfile from './Header/HeaderProfile';
 import HeaderWorkspaces from './Header/HeaderWorkspaces';
-import React from 'react';
 import { useLocation } from 'react-router-dom';
 import { apps } from '../apps/index';
 import { FaGlobe } from 'react-icons/fa';
@@ -19,51 +18,120 @@ const coreApplicationsApp = {
   menus: [] as Array<{ label: string; items: Array<{ name: string; shortcut?: string; action?: () => void }> }>,
 };
 
+const HeaderActionMenu = ({
+  label,
+  items,
+}: {
+  label: string;
+  items: Array<{ name: string; shortcut?: string; action?: () => void }>;
+}) => {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  return (
+    <div ref={menuRef} className="relative flex flex-row justify-center items-center">
+      <button
+        type="button"
+        className="uppercase text-xs text-white/80 hover:bg-white/10 px-3 py-1"
+        onClick={() => setOpen((value) => !value)}
+      >
+        {label}
+      </button>
+      {open ? (
+        <div className="absolute left-0 top-full z-50 mt-1 w-auto origin-top-left rounded-lg border border-white/10 bg-black/20 text-white backdrop-blur-md focus:outline-none">
+          {items.map(({ name, shortcut, action }, index) => (
+            <div key={name} className="flex flex-col">
+              {index > 0 ? <div className="mx-2 h-px bg-white/10" /> : null}
+              <button
+                type="button"
+                className="group flex w-full items-center gap-1 px-3 py-1.5 text-xs hover:bg-white/10"
+                onClick={() => {
+                  setOpen(false);
+                  action?.();
+                }}
+              >
+                {name}
+                <kbd className="ml-auto font-sans text-xs text-white/50">{shortcut}</kbd>
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 const Header: React.FC<{ opaque?: boolean }> = ({ opaque = true }) => {
   const location = useLocation();
-  
-  const currentApp = apps.find(app => {
-    if (app.to === '/') {
-      return location.pathname === '/';
-    }
-    return location.pathname.startsWith(app.to);
-  }) ?? (location.pathname.startsWith('/settings')
-    ? coreSettingsApp
-    : location.pathname.startsWith('/applications') || location.pathname.startsWith('/apps')
-      ? coreApplicationsApp
-      : undefined);
+
+  const currentApp = useMemo(() => {
+    return apps.find(app => {
+      if (app.to === '/') {
+        return location.pathname === '/';
+      }
+      return location.pathname.startsWith(app.to);
+    }) ?? (location.pathname.startsWith('/settings')
+      ? coreSettingsApp
+      : location.pathname.startsWith('/applications') || location.pathname.startsWith('/apps')
+        ? coreApplicationsApp
+        : undefined);
+  }, [location.pathname]);
 
   const title = currentApp?.title || 'AI NETWORK OPERATIONS';
-  const actionMenus = currentApp?.menus || [];
-
-  const setFullscreenMenu = () => {
-    let viewMenu = actionMenus.find(menu => menu.label === 'View');
-
-    if (!viewMenu) {
-      viewMenu = {
-        label: 'View',
-        items: []
-      }
-      actionMenus.push(viewMenu);
-    }
-    
-    const toggleFullscreen = viewMenu.items.find(item => item.name === 'Toggle fullscreen');
-    if (!toggleFullscreen) {
-      viewMenu.items.push({ 
-        name: 'Toggle fullscreen', 
-        shortcut: 'F11', 
-        action: () => { 
-          if (document.fullscreenElement) {
-            document.exitFullscreen();
-          } else {
-            document.documentElement.requestFullscreen();
-          }
+  const actionMenus = useMemo(() => {
+    const baseMenus = (currentApp?.menus || []).map((menu) => ({
+      ...menu,
+      items: [...menu.items],
+    }));
+    const viewMenuIndex = baseMenus.findIndex((menu) => menu.label === 'View');
+    const fullscreenItem = {
+      name: 'Toggle fullscreen',
+      shortcut: 'F11',
+      action: () => {
+        if (document.fullscreenElement) {
+          document.exitFullscreen();
+        } else {
+          document.documentElement.requestFullscreen();
         }
-      });
-    }
-  }
+      },
+    };
 
-  setFullscreenMenu();
+    if (viewMenuIndex === -1) {
+      baseMenus.push({
+        label: 'View',
+        items: [fullscreenItem],
+      });
+      return baseMenus;
+    }
+
+    const viewMenu = baseMenus[viewMenuIndex];
+    if (!viewMenu.items.some((item) => item.name === fullscreenItem.name)) {
+      viewMenu.items = [...viewMenu.items, fullscreenItem];
+    }
+
+    return baseMenus;
+  }, [currentApp]);
 
   return (
     <div className="w-full left-0 right-0 z-[999]">
@@ -72,35 +140,9 @@ const Header: React.FC<{ opaque?: boolean }> = ({ opaque = true }) => {
           <h1 className="text-xs font-bold text-white uppercase font-sans">{title}</h1>
           <div className="flex flex-row justify-center items-center z-50">
             {actionMenus?.map(({ label, items }, idx) => (
-              <div className='flex flex-row justify-center items-center' key={idx}>
+              <div className="flex flex-row justify-center items-center" key={idx}>
                 <div className="h-4 w-px bg-white/20 mx-2" />
-                <Menu key={idx}>
-                  <MenuButton className="uppercase text-xs text-white/80 hover:bg-white/10 px-3 py-1">
-                    {label}
-                  </MenuButton>
-                  <MenuItems
-                    transition
-                    anchor="bottom start"
-                    className={`w-auto origin-top-left border border-white/10 rounded-lg bg-black/20 backdrop-blur-md text-white transition duration-100 ease-out [--anchor-gap:var(--spacing-1)] focus:outline-none data-[closed]:scale-95 data-[closed]:opacity-0 z-50`}
-                  >
-                    {items.map(({ name, shortcut, action }, i) => (
-                      <MenuItem key={i}>
-                        <div className='flex flex-col'>
-                          { i > 0 && <div className="h-px bg-white/10 mx-2" /> }
-                          <button
-                            className="group flex w-full text-xs items-center gap-1 py-1.5 px-3 data-[focus]:bg-white/5 hover:bg-white/10"
-                            onClick={action}
-                          >
-                            {name}
-                            <kbd className="ml-auto font-sans text-xs text-white/50 group-data-[focus]:inline">
-                              {shortcut}
-                            </kbd>
-                          </button>
-                        </div>
-                      </MenuItem>
-                    ))}
-                  </MenuItems>
-                </Menu>
+                <HeaderActionMenu label={label} items={items} />
               </div>
             ))}
           </div>

@@ -1,12 +1,8 @@
 import type { Request, Response } from 'express';
-import { config } from '../../config/env';
 import { checkForUpdates, installUpdate } from './updates.service';
 
 function ensureAdmin(req: Request, res: Response): boolean {
-  const username = req.user?.username?.trim().toLowerCase() ?? '';
-  const adminUsername = config.admin.username.trim().toLowerCase();
-
-  if (username !== adminUsername) {
+  if (!req.user?.is_admin) {
     res.status(403).json({ success: false, error: 'Only admin can manage platform updates.' });
     return false;
   }

@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
+import { config } from '../../config/env';
 import { readStorage, updateStorage, type StoredUser } from '../storage/storage.service';
 
 export type PublicUser = {
@@ -7,12 +8,17 @@ export type PublicUser = {
   workspace_id: string;
   username: string;
   is_active: boolean;
+  is_admin: boolean;
   created_at: string;
   updated_at: string;
 };
 
 function normalizeUsername(username: string): string {
   return username.trim().toLowerCase();
+}
+
+function isSystemAdminUsername(username: string): boolean {
+  return normalizeUsername(username) === normalizeUsername(config.admin.username);
 }
 
 const USERNAME_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/;
@@ -36,6 +42,7 @@ function toPublicUser(user: StoredUser): PublicUser {
     workspace_id: user.workspace_id,
     username: user.username,
     is_active: user.is_active,
+    is_admin: user.is_admin || isSystemAdminUsername(user.username),
     created_at: user.created_at,
     updated_at: user.updated_at,
   };
@@ -71,6 +78,7 @@ export async function createUser(username: string, password: string, workspaceId
       username: normalized,
       password_hash: await bcrypt.hash(password, 10),
       is_active: true,
+      is_admin: false,
       created_at: now,
       updated_at: now,
     };
@@ -142,6 +150,10 @@ export async function renameUser(
     throw new Error('you cannot rename your own account while connected');
   }
 
+  if (isSystemAdminUsername(normalizedCurrent)) {
+    throw new Error('system admin username cannot be renamed');
+  }
+
   if (normalizedCurrent === normalizedNext) {
     throw new Error('new username must be different');
   }
@@ -192,6 +204,10 @@ export async function updateUserStatus(username: string, isActive: boolean, acto
   const normalized = normalizeUsername(username);
   const actor = normalizeUsername(actorUsername);
 
+  if (isSystemAdminUsername(normalized) && !isActive) {
+    throw new Error('system admin account cannot be disabled');
+  }
+
   if (!isActive && normalized === actor) {
     throw new Error('you cannot disable your own account');
   }
@@ -236,8 +252,64 @@ export async function updateUserStatus(username: string, isActive: boolean, acto
   return toPublicUser(updated);
 }
 
+export async function updateUserRole(username: string, isAdmin: boolean, actorUsername: string): Promise<PublicUser> {
+  const normalizedTarget = normalizeUsername(username);
+  const normalizedActor = normalizeUsername(actorUsername);
+
+  if (isSystemAdminUsername(normalizedTarget) && !isAdmin) {
+    throw new Error('system admin role cannot be removed');
+  }
+
+  if (!isAdmin && normalizedTarget === normalizedActor) {
+    throw new Error('you cannot remove your own admin role while connected');
+  }
+
+  let updated: StoredUser | null = null;
+
+  await updateStorage((current) => {
+    const adminCount = current.users.filter((user) => user.is_admin).length;
+
+    const nextUsers = current.users.map((user) => {
+      if (normalizeUsername(user.username) !== normalizedTarget) {
+        return user;
+      }
+
+      if (!isAdmin && user.is_admin && adminCount <= 1) {
+        throw new Error('cannot remove admin role from the last admin user');
+      }
+
+      updated = {
+        ...user,
+        is_admin: isAdmin,
+        updated_at: new Date().toISOString(),
+      };
+
+      return updated;
+    });
+
+    if (!updated) {
+      throw new Error('user not found');
+    }
+
+    return {
+      ...current,
+      users: nextUsers,
+    };
+  });
+
+  if (!updated) {
+    throw new Error('user not found');
+  }
+
+  return toPublicUser(updated);
+}
+
 export async function deleteUser(username: string): Promise<void> {
   const normalized = normalizeUsername(username);
+
+  if (isSystemAdminUsername(normalized)) {
+    throw new Error('system admin account cannot be deleted');
+  }
 
   await updateStorage((current) => {
     const userToDelete = current.users.find((user) => normalizeUsername(user.username) === normalized);
@@ -248,6 +320,11 @@ export async function deleteUser(username: string): Promise<void> {
     const activeCount = current.users.filter((user) => user.is_active).length;
     if (userToDelete.is_active && activeCount <= 1) {
       throw new Error('cannot delete last active user');
+    }
+
+    const adminCount = current.users.filter((user) => user.is_admin).length;
+    if (userToDelete.is_admin && adminCount <= 1) {
+      throw new Error('cannot delete last admin user');
     }
 
     return {

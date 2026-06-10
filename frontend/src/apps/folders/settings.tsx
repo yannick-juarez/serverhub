@@ -9,6 +9,9 @@ const FileBrowserSettingsSection = () => {
   const [filesRoot, setFilesRoot] = useState("");
   const [savingRoot, setSavingRoot] = useState(false);
   const [rootMessage, setRootMessage] = useState<string | null>(null);
+  const [previewMaxMb, setPreviewMaxMb] = useState("150");
+  const [savingPreview, setSavingPreview] = useState(false);
+  const [previewMessage, setPreviewMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -17,6 +20,9 @@ const FileBrowserSettingsSection = () => {
         setError(null);
         const prefs = await getPreferences();
         setFilesRoot(typeof prefs.filesRoot === "string" ? prefs.filesRoot : "");
+        const maxMbRaw = prefs.filesPreviewMaxMb;
+        const maxMb = typeof maxMbRaw === "number" ? maxMbRaw : Number(maxMbRaw);
+        setPreviewMaxMb(Number.isFinite(maxMb) && maxMb > 0 ? String(Math.floor(maxMb)) : "150");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unable to load preferences");
       } finally {
@@ -39,6 +45,29 @@ const FileBrowserSettingsSection = () => {
       setRootMessage(err instanceof Error ? err.message : "Unable to save folder");
     } finally {
       setSavingRoot(false);
+    }
+  };
+
+  const savePreviewMaxMb = async () => {
+    const parsed = Number(previewMaxMb);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setPreviewMessage("Enter a valid positive number.");
+      return;
+    }
+
+    try {
+      setSavingPreview(true);
+      setPreviewMessage(null);
+      const data = await patchPreferences({ filesPreviewMaxMb: Math.floor(parsed) });
+      const next = typeof data.filesPreviewMaxMb === "number"
+        ? data.filesPreviewMaxMb
+        : Math.floor(parsed);
+      setPreviewMaxMb(String(next));
+      setPreviewMessage("Preview size limit updated.");
+    } catch (err) {
+      setPreviewMessage(err instanceof Error ? err.message : "Unable to save preview limit");
+    } finally {
+      setSavingPreview(false);
     }
   };
 
@@ -74,6 +103,32 @@ const FileBrowserSettingsSection = () => {
       </div>
 
       {rootMessage ? <p className="mt-2 text-xs text-slate-300">{rootMessage}</p> : null}
+
+      <div className="mt-5 border-t border-white/10 pt-4">
+        <h3 className="text-sm font-semibold text-slate-200">Preview Limit</h3>
+        <p className="mt-1 text-xs text-slate-400">
+          Maximum file size allowed for in-app preview (text/image/pdf) in MB.
+        </p>
+        <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center">
+          <input
+            className="w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-slate-100 outline-none"
+            value={previewMaxMb}
+            onChange={(event) => setPreviewMaxMb(event.target.value)}
+            placeholder="150"
+            inputMode="numeric"
+          />
+          <button
+            className="rounded-lg bg-white/90 px-4 py-2 text-sm font-semibold text-black transition hover:bg-white disabled:opacity-60"
+            onClick={() => {
+              void savePreviewMaxMb();
+            }}
+            disabled={savingPreview}
+          >
+            {savingPreview ? "Saving..." : "Save"}
+          </button>
+        </div>
+        {previewMessage ? <p className="mt-2 text-xs text-slate-300">{previewMessage}</p> : null}
+      </div>
     </>
   );
 };

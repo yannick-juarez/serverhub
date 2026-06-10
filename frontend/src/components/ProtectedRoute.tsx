@@ -2,16 +2,15 @@ import { Navigate } from "react-router-dom";
 import Cookies from "js-cookie";
 
 import { ReactNode, useEffect, useMemo, useState } from "react";
-import { Toaster } from 'react-hot-toast';
 
-import SideDock from "./SideDock";
 import Header from "./Header";
+import SideDock from "./SideDock";
 import Footer from "./Footer";
 
 import { getStoredWorkspaceSettings, WORKSPACE_SETTINGS_UPDATED_EVENT, type WorkspaceSettings } from "../data/workspaces";
 
 const ProtectedRoute = ({ children, opaque = true }: { children: ReactNode, opaque?: boolean }) => {
-   opaque = opaque ?? true;
+  opaque = opaque ?? true;
 
   const token = Cookies.get("token");
 
@@ -53,20 +52,6 @@ const ProtectedRoute = ({ children, opaque = true }: { children: ReactNode, opaq
       }
       <div className="flex flex-row w-full">
         <SideDock className={selectedBanner ? "mt-4 h-[calc(100vh-1rem)]" : "h-screen"} />
-        <Toaster
-          position="top-right"
-          reverseOrder={false}
-          toastOptions={{
-            style: {
-              marginTop: '40px',
-              marginRight: '40px',
-              background: 'rgba(0, 0, 0, 0.4)',
-              border: '1px solid #222',
-              backdropFilter: 'blur(10px)',
-              color: '#fff',
-            },
-          }}
-        />
         <div className={`overflow-y-auto flex flex-col w-full ${selectedBanner ? "pt-4" : ""}`}>
           <Header opaque={opaque} />
           <div className={`${selectedBanner 

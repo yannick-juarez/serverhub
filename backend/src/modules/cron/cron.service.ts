@@ -31,8 +31,47 @@ class CronServiceError extends Error {
   }
 }
 
+type RunCommandResult = {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+};
+
 function serviceError(statusCode: number, message: string): CronServiceError {
   return new CronServiceError(statusCode, message);
+}
+
+function runCommand(command: string): Promise<RunCommandResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, {
+      shell: true,
+      cwd: process.cwd(),
+      env: process.env,
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk: Buffer | string) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on('data', (chunk: Buffer | string) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (error) => {
+      reject(serviceError(500, error.message || 'Unable to run job'));
+    });
+
+    child.on('close', (code) => {
+      resolve({
+        exitCode: code ?? 0,
+        stdout,
+        stderr,
+      });
+    });
+  });
 }
 
 function mapFsError(error: unknown, action: string, target: string): CronServiceError {
@@ -708,4 +747,27 @@ export async function deleteJob(id: string): Promise<void> {
   }
 
   await persistEntries(filtered);
+}
+
+export async function runJob(id: string): Promise<RunCommandResult & { job: CronJob }> {
+  const job = (await listJobs()).find((item) => item.id === id);
+
+  if (!job) {
+    throw serviceError(404, 'Job not found');
+  }
+
+  if (!job.command.trim()) {
+    throw serviceError(400, 'Job command is required');
+  }
+
+  const result = await runCommand(job.command.trim());
+
+  if (result.exitCode !== 0) {
+    throw serviceError(500, result.stderr.trim() || `Job exited with code ${result.exitCode}`);
+  }
+
+  return {
+    job,
+    ...result,
+  };
 }

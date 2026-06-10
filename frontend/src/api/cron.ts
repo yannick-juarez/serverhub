@@ -11,6 +11,13 @@ export type CronJob = {
   nextRun?: string;
 };
 
+export type RunCronJobResult = {
+  job: CronJob;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+};
+
 export function fetchCronJobs(): Promise<CronJob[]> {
   return apiRequest<CronJob[]>("/cron");
 }
@@ -32,5 +39,11 @@ export function updateCronJob(id: string, payload: Partial<Pick<CronJob, "name" 
 export async function deleteCronJob(id: string): Promise<void> {
   await apiRequest<void>(`/cron/${encodeURIComponent(id)}`, {
     method: "DELETE",
+  });
+}
+
+export function runCronJob(id: string): Promise<RunCronJobResult> {
+  return apiRequest<RunCronJobResult>(`/cron/${encodeURIComponent(id)}/run`, {
+    method: "POST",
   });
 }

@@ -5,10 +5,10 @@ import { apps, type AppDefinition } from '../apps/index';
 import { CgMenuGridO } from "react-icons/cg";
 import { FaCog } from 'react-icons/fa';
 import { getMe, getPreferences, patchPreferences, type PreferencesResponse } from '../api/settings';
+import { getAppEnabledMap, getAppVisibilityMap, isAppEnabled, isAppVisible } from '../core/applications/preferences';
 
 import Polarstar from './Polarstar';
 
-import { Scrollbar } from 'smooth-scrollbar-react';
 import { FaMagnifyingGlass } from 'react-icons/fa6';
 
 const accentWhite = {
@@ -173,10 +173,19 @@ const SideDock = ({ className = '' }) => {
     const [draggedAppId, setDraggedAppId] = useState<string | null>(null);
     const [dragOverAppId, setDragOverAppId] = useState<string | null>(null);
 
-    const baseNavItems = useMemo(
-        () => apps.filter((app) => app.showInSideDock && !app.isBottomItem && !app.isInternal),
-        [],
-    );
+    const baseNavItems = useMemo(() => {
+        const visibilityMap = getAppVisibilityMap(preferences);
+        const enabledMap = getAppEnabledMap(preferences);
+
+        return apps.filter(
+            (app) =>
+                app.showInSideDock &&
+                !app.isBottomItem &&
+                !app.isInternal &&
+                isAppVisible(app.id, visibilityMap) &&
+                isAppEnabled(app.id, enabledMap),
+        );
+    }, [preferences]);
 
     const navItems = useMemo(
         () => orderNavItems(baseNavItems, navOrderIds),
@@ -349,11 +358,7 @@ const SideDock = ({ className = '' }) => {
             <div className='border-t border-white/10 my-2'></div>
 
             {/* Navigation Items */}
-            <Scrollbar
-                className={`max-h-[100vh-100px] tracks-hidden ${isOpen ? 'w-full' : 'w-[34px]'}`}
-                alwaysShowTracks={false}
-                continuousScrolling={false}
-            >
+            <div className={`flex-1 overflow-y-auto overflow-x-hidden ${isOpen ? 'w-full' : 'w-[34px]'}`}>
                 <nav className={`flex-1 overflow-x-hidden transition-all ${isOpen ? 'w-full' : 'w-[34px]'}`}>
                     {navItems.map((app) => (
                         <div
@@ -378,7 +383,7 @@ const SideDock = ({ className = '' }) => {
                         </div>
                     ))}
                 </nav>
-            </Scrollbar>
+            </div>
 
             {/* Bottom Items */}
             <div className='py-1 border-t border-gray-600/50' style={{

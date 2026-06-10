@@ -44,6 +44,18 @@ export async function patchPreferences(patch: Record<string, unknown>): Promise<
     nextPatch.filesRoot = resolved;
   }
 
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'filesPreviewMaxMb')) {
+    const requested = nextPatch.filesPreviewMaxMb;
+    const numeric = typeof requested === 'number' ? requested : Number(requested);
+
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      throw new Error('filesPreviewMaxMb must be a positive number');
+    }
+
+    // Keep a server-side guardrail for preview memory usage.
+    nextPatch.filesPreviewMaxMb = Math.min(Math.max(Math.floor(numeric), 1), 300);
+  }
+
   let preferences: PlatformPreferences = {};
 
   await updateStorage((current) => {

@@ -78,6 +78,7 @@ export type StoredUser = {
   username: string;
   password_hash: string;
   is_active: boolean;
+  is_admin: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -234,6 +235,7 @@ function defaultStorage(): StorageData {
         username: config.admin.username.trim().toLowerCase(),
         password_hash: adminPasswordHash,
         is_active: true,
+        is_admin: true,
         created_at: now,
         updated_at: now,
       },
@@ -380,6 +382,10 @@ function tryMigrateJson(): StorageData | null {
       users: (data.users ?? []).map((u) => ({
         ...u,
         workspace_id: u.workspace_id || 'demo',
+        is_admin:
+          typeof u.is_admin === 'boolean'
+            ? u.is_admin
+            : (u.username ?? '').toString().trim().toLowerCase() === config.admin.username.trim().toLowerCase(),
       })),
       messages,
       calendar: data.calendar ?? { calendars: [], events: [] },

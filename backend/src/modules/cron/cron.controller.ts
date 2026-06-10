@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { listJobs, createJob, updateJob, deleteJob } from './cron.service';
+import { listJobs, createJob, updateJob, deleteJob, runJob } from './cron.service';
 import type { ApiResponse, CronJob } from '../../types';
 
 export async function handleList(_req: Request, res: Response): Promise<void> {
@@ -29,5 +29,12 @@ export async function handleDelete(req: Request, res: Response): Promise<void> {
   const { id } = req.params;
   await deleteJob(id);
   const resp: ApiResponse = { success: true, message: 'Job deleted' };
+  res.json(resp);
+}
+
+export async function handleRun(req: Request, res: Response): Promise<void> {
+  const { id } = req.params;
+  const result = await runJob(id);
+  const resp: ApiResponse = { success: true, data: result };
   res.json(resp);
 }

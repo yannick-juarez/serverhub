@@ -28,9 +28,12 @@ export async function handleLogin(req: Request, res: Response): Promise<void> {
 
 export function handleMe(req: Request, res: Response): void {
   // Le middleware auth a déjà validé et attaché req.user
-  const resp: ApiResponse<{ username: string }> = {
+  const resp: ApiResponse<{ username: string; is_admin: boolean }> = {
     success: true,
-    data: { username: (req as Request & { user?: { username: string } }).user?.username ?? '' },
+    data: {
+      username: (req as Request & { user?: { username: string; is_admin: boolean } }).user?.username ?? '',
+      is_admin: (req as Request & { user?: { username: string; is_admin: boolean } }).user?.is_admin ?? false,
+    },
   };
   res.json(resp);
 }

@@ -2,7 +2,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from 'react-router-dom';
 import Cookies from "js-cookie";
-import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react'
 import { Cog6ToothIcon } from "@heroicons/react/24/outline";
 import { LockClosedIcon, UserCircleIcon } from "@heroicons/react/24/solid";
 import { getMe, getPreferences } from "../../api/settings";
@@ -10,6 +9,7 @@ import { getMe, getPreferences } from "../../api/settings";
 const HeaderProfile = () => {
     const navigate = useNavigate();
     const [displayName, setDisplayName] = useState("User");
+  const [open, setOpen] = useState(false);
 
     useEffect(() => {
       let currentUsername = Cookies.get("user") ?? "";
@@ -61,26 +61,46 @@ const HeaderProfile = () => {
       };
     }, []);
 
+    useEffect(() => {
+      const handlePointerDown = (event: PointerEvent) => {
+        const menu = document.getElementById("header-profile-menu");
+        if (menu && !menu.contains(event.target as Node)) {
+          setOpen(false);
+        }
+      };
+
+      const handleKeyDown = (event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+          setOpen(false);
+        }
+      };
+
+      window.addEventListener("pointerdown", handlePointerDown);
+      window.addEventListener("keydown", handleKeyDown);
+      return () => {
+        window.removeEventListener("pointerdown", handlePointerDown);
+        window.removeEventListener("keydown", handleKeyDown);
+      };
+    }, []);
+
     return (
-        <Menu as="div" className="relative">
-          <MenuButton className="flex items-center focus:outline-none transition-transform *:hover:cursor-pointer">
+        <div id="header-profile-menu" className="relative">
+          <button type="button" className="flex items-center focus:outline-none transition-transform *:hover:cursor-pointer" onClick={() => setOpen((value) => !value)}>
             <UserCircleIcon className="h-5 w-5 m-1 text-white hover:text-white/80 transition" />
             <span className="font-semibold">{displayName}</span>
-          </MenuButton>
-          <MenuItems
-            transition
-            anchor="bottom end"
-            className="w-32 origin-top-right backdrop-blur-md border border-white/10 rounded-lg bg-black/40 text-sm text-white transition duration-100 ease-out [--anchor-gap:var(--spacing-1)] focus:outline-none data-[closed]:scale-95 data-[closed]:opacity-0"
-          >
-            <MenuItem>
-              <button className="group flex w-full items-center gap-1 py-2 px-3 data-[focus]:bg-white/5" onClick={() => navigate("/settings")}>
-              <Cog6ToothIcon className="h-3 w-3 text-white/80" />
-              Settings
+          </button>
+          {open ? (
+            <div className="absolute right-0 top-full z-50 mt-1 w-32 origin-top-right rounded-lg border border-white/10 bg-black/40 text-sm text-white backdrop-blur-md focus:outline-none">
+              <button className="group flex w-full items-center gap-1 py-2 px-3 text-left hover:bg-white/5" onClick={() => {
+                setOpen(false);
+                navigate("/settings");
+              }}>
+                <Cog6ToothIcon className="h-3 w-3 text-white/80" />
+                Settings
               </button>
-            </MenuItem>
-            <div className="h-px bg-white/10" />
-            <MenuItem>
-              <button className="group flex w-full items-center gap-1 py-2 px-3 data-[focus]:bg-white/5 text-red-500" onClick={() => {
+              <div className="h-px bg-white/10" />
+              <button className="group flex w-full items-center gap-1 py-2 px-3 text-left text-red-500 hover:bg-white/5" onClick={() => {
+                setOpen(false);
                 Cookies.remove("user");
                 Cookies.remove("token");
                 navigate("/login");
@@ -88,9 +108,9 @@ const HeaderProfile = () => {
                 <LockClosedIcon className="h-3 w-3 text-red-500" />
                 Logout
               </button>
-            </MenuItem>
-          </MenuItems>
-        </Menu>
+            </div>
+          ) : null}
+        </div>
     );
 }
 
