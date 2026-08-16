@@ -333,7 +333,7 @@ export function readStorageSync(db: Database.Database): StorageData {
     preferences,
     users,
     messages: { channels, directs, groups, items: messageItems },
-    calendar: { calendars, events },
+    calendar: { calendars, events, tasks: [], masks: [] },
   };
 }
 
