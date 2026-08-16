@@ -152,6 +152,61 @@ export type StoredCalendarEvent = {
   updated_at: string;
 };
 
+// ─── Intelligent Scheduling Types ────────────────────────────────────────────
+
+/** A time slot within a day: e.g. { day: 1, start: "09:00", end: "12:00" } (day 0=Sun … 6=Sat) */
+export type MaskSlot = {
+  day: number; // 0 = Sunday … 6 = Saturday
+  start: string; // "HH:MM"
+  end: string;   // "HH:MM"
+};
+
+/** Set operation applied on top of this mask's own slots */
+export type MaskOperation = {
+  op: 'add' | 'subtract';
+  mask_id: string;
+};
+
+export type StoredMask = {
+  mask_id: string;
+  name: string;
+  /** 'native' = built-in preset, 'custom' = user-defined */
+  type: 'native' | 'custom';
+  slots: MaskSlot[];
+  /** Optional set operations composing this mask from other masks */
+  operations: MaskOperation[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaskStatus = 'todo' | 'in_progress' | 'done' | 'failed';
+export type TaskType = 'fixed' | 'dynamic';
+
+export type StoredTask = {
+  task_id: string;
+  calendar_id: string | null;
+  title: string;
+  notes: string | null;
+  location: string | null;
+  type: TaskType;
+  status: TaskStatus;
+
+  // Fixed-event fields (used when type === 'fixed')
+  start_at: string | null;
+  end_at: string | null;
+  all_day: boolean;
+
+  // Dynamic-task fields (used when type === 'dynamic')
+  duration_minutes: number | null;
+  deadline: string | null;       // ISO datetime — soft deadline
+  mask_id: string | null;        // availability mask to respect
+  dependencies: string[];        // task_ids that must be 'done' first
+  priority: number;              // 0 = normal, higher = more urgent
+
+  created_at: string;
+  updated_at: string;
+};
+
 export type StorageData = {
   connections: {
     db: StoredDbConnection[];
@@ -172,6 +227,8 @@ export type StorageData = {
   calendar: {
     calendars: StoredCalendar[];
     events: StoredCalendarEvent[];
+    tasks: StoredTask[];
+    masks: StoredMask[];
   };
 };
 
@@ -310,6 +367,63 @@ function defaultStorage(): StorageData {
         },
       ],
       events: [],
+      tasks: [],
+      masks: [
+        {
+          mask_id: 'native-morning',
+          name: 'Matin',
+          type: 'native',
+          slots: [1,2,3,4,5].map(day => ({ day, start: '06:00', end: '12:00' })),
+          operations: [],
+          created_at: now,
+          updated_at: now,
+        },
+        {
+          mask_id: 'native-noon',
+          name: 'Midi',
+          type: 'native',
+          slots: [1,2,3,4,5].map(day => ({ day, start: '12:00', end: '14:00' })),
+          operations: [],
+          created_at: now,
+          updated_at: now,
+        },
+        {
+          mask_id: 'native-afternoon',
+          name: 'Après-midi',
+          type: 'native',
+          slots: [1,2,3,4,5].map(day => ({ day, start: '14:00', end: '19:00' })),
+          operations: [],
+          created_at: now,
+          updated_at: now,
+        },
+        {
+          mask_id: 'native-evening',
+          name: 'Soirée',
+          type: 'native',
+          slots: [0,1,2,3,4,5,6].map(day => ({ day, start: '19:00', end: '23:00' })),
+          operations: [],
+          created_at: now,
+          updated_at: now,
+        },
+        {
+          mask_id: 'native-week',
+          name: 'Semaine',
+          type: 'native',
+          slots: [1,2,3,4,5].flatMap(day => [{ day, start: '08:00', end: '20:00' }]),
+          operations: [],
+          created_at: now,
+          updated_at: now,
+        },
+        {
+          mask_id: 'native-weekend',
+          name: 'Week-end',
+          type: 'native',
+          slots: [0,6].map(day => ({ day, start: '08:00', end: '22:00' })),
+          operations: [],
+          created_at: now,
+          updated_at: now,
+        },
+      ],
     },
   };
 }
@@ -388,7 +502,12 @@ function tryMigrateJson(): StorageData | null {
             : (u.username ?? '').toString().trim().toLowerCase() === config.admin.username.trim().toLowerCase(),
       })),
       messages,
-      calendar: data.calendar ?? { calendars: [], events: [] },
+      calendar: {
+        calendars: data.calendar?.calendars ?? [],
+        events: data.calendar?.events ?? [],
+        tasks: data.calendar?.tasks ?? [],
+        masks: data.calendar?.masks ?? [],
+      },
     };
 
     // Archive the JSON file so it's never imported again

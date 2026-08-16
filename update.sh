@@ -41,28 +41,52 @@ ok "Service stopped"
 section "Copying Updated Files"
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 step "Syncing sources to ${APP_DIR}..."
-cd "$SCRIPT_DIR"
-find . \
-  -not -path '*/node_modules/*'    \
-  -not -path '*/dist/*'            \
-  -not -name '.env'                \
-  -not -name 'app-storage.json'    \
-  -not -name 'app.db'             \
-  -not -name 'app.db-shm'         \
-  -not -name 'app.db-wal'         \
-  | while IFS= read -r f; do
-      dst="$APP_DIR/$f"
-      if [[ -d "$f" ]]; then
-        mkdir -p "$dst"
-      else
-        cp "$f" "$dst"
-      fi
-    done
-ok "Files updated"
+
+SRC_REAL="$(realpath "$SCRIPT_DIR")"
+DST_REAL="$(realpath "$APP_DIR")"
+
+if [[ "$SRC_REAL" == "$DST_REAL" ]]; then
+  ok "Already running from ${APP_DIR} — skipping file copy (source = destination)"
+else
+  if command -v rsync &>/dev/null; then
+    rsync -a --delete \
+      --exclude='node_modules/' \
+      --exclude='dist/' \
+      --exclude='.env' \
+      --exclude='app-storage.json' \
+      --exclude='app.db' \
+      --exclude='app.db-shm' \
+      --exclude='app.db-wal' \
+      "$SCRIPT_DIR/" "$APP_DIR/"
+  else
+    cd "$SCRIPT_DIR"
+    find . \
+      -not -path '*/node_modules/*'    \
+      -not -path '*/dist/*'            \
+      -not -name '.env'                \
+      -not -name 'app-storage.json'    \
+      -not -name 'app.db'             \
+      -not -name 'app.db-shm'         \
+      -not -name 'app.db-wal'         \
+      | while IFS= read -r f; do
+          src_abs="$(realpath "$f" 2>/dev/null || echo "")"
+          dst="$APP_DIR/$f"
+          dst_abs="$(realpath "$dst" 2>/dev/null || echo "")"
+          [[ -z "$src_abs" ]] && continue
+          [[ "$src_abs" == "$dst_abs" ]] && continue
+          if [[ -d "$f" ]]; then
+            mkdir -p "$dst"
+          else
+            cp "$f" "$dst"
+          fi
+        done
+  fi
+  ok "Files updated"
+fi
 
 section "Rebuilding"
-step "Installing backend dependencies..."
-cd "$APP_DIR/backend" && npm install --omit=dev --silent
+step "Installing backend dependencies (with dev)..."
+cd "$APP_DIR/backend" && npm install --silent
 ok "Backend dependencies ready"
 
 step "Installing frontend dependencies..."
@@ -76,6 +100,10 @@ ok "Frontend built"
 step "Compiling backend..."
 cd "$APP_DIR/backend" && npm run build --silent
 ok "Backend compiled"
+
+step "Pruning backend dev dependencies..."
+cd "$APP_DIR/backend" && npm prune --omit=dev --silent
+ok "Backend dev dependencies removed"
 
 section "Restarting Service"
 step "Starting ${SERVICE_NAME}..."

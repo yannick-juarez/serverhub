@@ -7,6 +7,10 @@ export default defineConfig({
   define: {
     CESIUM_BASE_URL: JSON.stringify('/cesium'),
   },
+  build: {
+    // Monaco Editor alone is ~3.8MB — suppress misleading size warning
+    chunkSizeWarningLimit: 4096,
+  },
   server: {
     proxy: {
       '/api': {
