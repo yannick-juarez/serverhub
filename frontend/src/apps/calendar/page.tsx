@@ -912,7 +912,7 @@ function TaskFormModal({ initial, tasks, masks, calendars, onSave, onDelete, onC
         end_at: type === "fixed" && !allDay ? new Date(endAt).toISOString() : type === "fixed" && allDay ? `${endAt.slice(0, 10)}T23:59:59.999Z` : null,
         all_day: type === "fixed" ? allDay : false,
         duration_minutes: type === "dynamic" ? (parseInt(durationMinutes) || 30) : null,
-        deadline: type === "dynamic" && deadline ? new Date(deadline).toISOString() : null,
+        deadline: deadline ? new Date(deadline).toISOString() : null,
         mask_id: type === "dynamic" && maskId ? maskId : null,
         dependencies: type === "dynamic" ? dependencies : [],
         priority: parseInt(priority) || 0,
@@ -1021,7 +1021,16 @@ function TaskFormModal({ initial, tasks, masks, calendars, onSave, onDelete, onC
             </>
           )}
 
-          {/* Dynamic: duration, deadline, mask, dependencies, priority */}
+          {/* Deadline — available for both fixed and dynamic */}
+          <div>
+            <label className="block text-xs text-white/40 mb-1">
+              {type === "fixed" ? "Deadline de préparation (optionnel)" : "Deadline (optionnel)"}
+            </label>
+            <input type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)}
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none [color-scheme:dark]" />
+          </div>
+
+          {/* Dynamic-only: duration, priority, mask, dependencies */}
           {type === "dynamic" && (
             <>
               <div className="grid grid-cols-2 gap-2">
@@ -1038,12 +1047,6 @@ function TaskFormModal({ initial, tasks, masks, calendars, onSave, onDelete, onC
               </div>
 
               <div>
-                <label className="block text-xs text-white/40 mb-1">Deadline (optionnel)</label>
-                <input type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none [color-scheme:dark]" />
-              </div>
-
-              <div>
                 <label className="block text-xs text-white/40 mb-1">Plage horaire (mask)</label>
                 <select value={maskId} onChange={(e) => setMaskId(e.target.value)}
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none appearance-none">
@@ -1056,7 +1059,7 @@ function TaskFormModal({ initial, tasks, masks, calendars, onSave, onDelete, onC
 
               <div>
                 <label className="block text-xs text-white/40 mb-1">Dépendances (tâches à finir avant)</label>
-                <div className="flex flex-col gap-1 max-h-36 overflow-y-auto">
+                <div className="flex flex-col gap-1 max-h-36 overflow-y-auto border border-white/5 rounded-lg p-2">
                   {otherTasks.length === 0 ? (
                     <span className="text-xs text-white/20 italic">Aucune autre tâche disponible</span>
                   ) : otherTasks.map((t) => {
@@ -1069,7 +1072,7 @@ function TaskFormModal({ initial, tasks, masks, calendars, onSave, onDelete, onC
                           onChange={() => setDependencies(checked ? dependencies.filter((d) => d !== t.task_id) : [...dependencies, t.task_id])}
                           className="accent-blue-500"
                         />
-                        <span className="text-xs text-white/60 truncate">{t.title}</span>
+                        <span className="text-xs text-white/60 truncate flex-1">{t.title}</span>
                         <span className={`text-[10px] shrink-0 ${STATUS_COLORS[t.status]}`}>{STATUS_LABELS[t.status]}</span>
                       </label>
                     );
@@ -1120,7 +1123,17 @@ function TaskFormModal({ initial, tasks, masks, calendars, onSave, onDelete, onC
 
 // ─── Mask form modal ──────────────────────────────────────────────────────────
 
-const DAY_SHORT = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"];
+// Day display order: Mon=1…Sat=6, Sun=0 — Sunday shown last
+const DAY_SHORT_ORDERED: { label: string; value: number }[] = [
+  { label: "Lun", value: 1 },
+  { label: "Mar", value: 2 },
+  { label: "Mer", value: 3 },
+  { label: "Jeu", value: 4 },
+  { label: "Ven", value: 5 },
+  { label: "Sam", value: 6 },
+  { label: "Dim", value: 0 },
+];
+const DAY_SHORT = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"]; // index = JS day (0=Sun)
 
 function MaskFormModal({ onSave, onClose, allMasks }: {
   onSave: (payload: Omit<Mask, "mask_id" | "created_at" | "updated_at">) => Promise<void>;
@@ -1188,7 +1201,7 @@ function MaskFormModal({ onSave, onClose, allMasks }: {
               <div key={i} className="flex items-center gap-1.5 mb-1.5">
                 <select value={slot.day} onChange={(e) => updateSlot(i, "day", parseInt(e.target.value))}
                   className="bg-white/5 border border-white/10 rounded px-1.5 py-1 text-xs text-white focus:outline-none appearance-none">
-                  {DAY_SHORT.map((d, idx) => <option key={idx} value={idx} style={{ background: "#171717" }}>{d}</option>)}
+                  {DAY_SHORT_ORDERED.map((d) => <option key={d.value} value={d.value} style={{ background: "#171717" }}>{d.label}</option>)}
                 </select>
                 <input type="time" value={slot.start} onChange={(e) => updateSlot(i, "start", e.target.value)}
                   className="bg-white/5 border border-white/10 rounded px-1.5 py-1 text-xs text-white focus:outline-none [color-scheme:dark]" />
@@ -1676,7 +1689,7 @@ export default function CalendarPage() {
   return (
     <div className="flex flex-1 overflow-hidden h-full">
       {/* ── Sidebar ───────────────────────────────────────────────────────── */}
-      <aside className="w-56 shrink-0 flex flex-col border-r border-white/5 bg-black/20 py-4 px-3 gap-3">
+      <aside className="w-1/4 min-w-[220px] max-w-[320px] shrink-0 flex flex-col border-r border-white/5 bg-black/20 py-4 px-3 gap-3">
         {/* Panel tabs */}
         <div className="flex gap-1 border border-white/10 rounded-lg overflow-hidden text-[10px]">
           <button onClick={() => setSidePanel("calendars")}
