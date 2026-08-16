@@ -61,8 +61,8 @@ find . \
 ok "Files updated"
 
 section "Rebuilding"
-step "Installing backend dependencies..."
-cd "$APP_DIR/backend" && npm install --omit=dev --silent
+step "Installing backend dependencies (with dev)..."
+cd "$APP_DIR/backend" && npm install --silent
 ok "Backend dependencies ready"
 
 step "Installing frontend dependencies..."
@@ -76,6 +76,10 @@ ok "Frontend built"
 step "Compiling backend..."
 cd "$APP_DIR/backend" && npm run build --silent
 ok "Backend compiled"
+
+step "Pruning backend dev dependencies..."
+cd "$APP_DIR/backend" && npm prune --omit=dev --silent
+ok "Backend dev dependencies removed"
 
 section "Restarting Service"
 step "Starting ${SERVICE_NAME}..."
