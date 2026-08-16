@@ -882,7 +882,7 @@ function TaskFormModal({ initial, tasks, masks, calendars, onSave, onDelete, onC
   const [location, setLocation] = useState(initial?.location ?? "");
   const [type, setType] = useState<"fixed" | "dynamic">(initial?.type ?? "fixed");
   const [status, setStatus] = useState<TaskStatus>(initial?.status ?? "todo");
-  const [calendarId, setCalendarId] = useState(initial?.calendar_id ?? calendars[0]?.calendar_id ?? null);
+  const [calendarId, setCalendarId] = useState<string | null>(initial?.calendar_id ?? calendars[0]?.calendar_id ?? null);
   // fixed
   const [startAt, setStartAt] = useState(initial?.start_at ? initial.start_at.slice(0, 16) : toLocalDatetimeStr(new Date()));
   const [endAt, setEndAt] = useState(initial?.end_at ? initial.end_at.slice(0, 16) : toLocalDatetimeStr(new Date(Date.now() + 3600000)));
