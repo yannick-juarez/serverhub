@@ -68,11 +68,13 @@ export async function handleListEvents(_req: Request, res: Response): Promise<vo
 }
 
 export async function handleCreateEvent(req: Request, res: Response): Promise<void> {
-  const { calendar_id, title, description, location, all_day, start_at, end_at } = req.body as {
+  const { calendar_id, title, description, location, location_lat, location_lon, all_day, start_at, end_at } = req.body as {
     calendar_id?: string;
     title?: string;
     description?: string;
     location?: string;
+    location_lat?: number;
+    location_lon?: number;
     all_day?: boolean;
     start_at?: string;
     end_at?: string;
@@ -88,6 +90,8 @@ export async function handleCreateEvent(req: Request, res: Response): Promise<vo
     title,
     description: description ?? null,
     location: location ?? null,
+    location_lat: location_lat ?? null,
+    location_lon: location_lon ?? null,
     all_day: all_day ?? false,
     start_at,
     end_at,
@@ -98,17 +102,19 @@ export async function handleCreateEvent(req: Request, res: Response): Promise<vo
 
 export async function handleUpdateEvent(req: Request, res: Response): Promise<void> {
   const { eventId } = req.params;
-  const { calendar_id, title, description, location, all_day, start_at, end_at } = req.body as {
+  const { calendar_id, title, description, location, location_lat, location_lon, all_day, start_at, end_at } = req.body as {
     calendar_id?: string;
     title?: string;
     description?: string | null;
     location?: string | null;
+    location_lat?: number | null;
+    location_lon?: number | null;
     all_day?: boolean;
     start_at?: string;
     end_at?: string;
   };
 
-  const updated = await updateEvent(eventId, { calendar_id, title, description, location, all_day, start_at, end_at });
+  const updated = await updateEvent(eventId, { calendar_id, title, description, location, location_lat, location_lon, all_day, start_at, end_at });
   res.json({ success: true, data: updated });
 }
 
@@ -203,4 +209,38 @@ export async function handleDeleteMask(req: Request, res: Response): Promise<voi
   const { maskId } = req.params;
   await deleteMask(maskId);
   res.json({ success: true, message: 'Mask deleted' });
+}
+
+// ─── Geocode (Nominatim proxy) ────────────────────────────────────────────────
+
+export async function handleGeocode(req: Request, res: Response): Promise<void> {
+  const q = req.query.q as string | undefined;
+  if (!q || !q.trim()) {
+    res.status(400).json({ success: false, error: 'Missing query parameter: q' });
+    return;
+  }
+
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(q.trim())}`;
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': 'ServerHub/1.0 (self-hosted calendar app)',
+      'Accept-Language': 'fr,en',
+    },
+  });
+
+  if (!response.ok) {
+    res.status(502).json({ success: false, error: 'Nominatim request failed' });
+    return;
+  }
+
+  type NominatimResult = { lat: string; lon: string; display_name: string; type: string; importance: number };
+  const raw = await response.json() as NominatimResult[];
+  const data = raw.map((r) => ({
+    display_name: r.display_name,
+    lat: parseFloat(r.lat),
+    lon: parseFloat(r.lon),
+    type: r.type,
+  }));
+
+  res.json({ success: true, data });
 }

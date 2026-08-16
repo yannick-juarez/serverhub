@@ -15,6 +15,8 @@ export type CalendarEvent = {
   title: string;
   description: string | null;
   location: string | null;
+  location_lat: number | null;
+  location_lon: number | null;
   all_day: boolean;
   start_at: string;
   end_at: string;
@@ -77,6 +79,8 @@ export async function createEvent(payload: {
   title: string;
   description?: string;
   location?: string;
+  location_lat?: number | null;
+  location_lon?: number | null;
   all_day: boolean;
   start_at: string;
   end_at: string;
@@ -95,6 +99,8 @@ export async function updateEvent(
     title: string;
     description: string | null;
     location: string | null;
+    location_lat: number | null;
+    location_lon: number | null;
     all_day: boolean;
     start_at: string;
     end_at: string;
@@ -122,6 +128,8 @@ export type Task = {
   title: string;
   notes: string | null;
   location: string | null;
+  location_lat: number | null;
+  location_lon: number | null;
   type: TaskType;
   status: TaskStatus;
   // Fixed
@@ -203,4 +211,19 @@ export async function updateMask(maskId: string, patch: Partial<Omit<Mask, 'mask
 
 export async function deleteMask(maskId: string): Promise<void> {
   await apiRequest<unknown>(`/calendar/masks/${maskId}`, { method: "DELETE" });
+}
+
+// ─── Geocode ──────────────────────────────────────────────────────────────────
+
+export type GeocodeResult = {
+  display_name: string;
+  lat: number;
+  lon: number;
+  type: string;
+};
+
+export async function geocodeLocation(q: string): Promise<GeocodeResult[]> {
+  const raw = await apiRequest<Envelope<GeocodeResult[]>>(`/calendar/geocode?q=${encodeURIComponent(q)}`);
+  const data = unwrap<GeocodeResult[]>(raw);
+  return Array.isArray(data) ? data : [];
 }

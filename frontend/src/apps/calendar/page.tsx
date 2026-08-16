@@ -36,6 +36,7 @@ import {
   createMask,
   deleteMask,
   fetchGhostPlacements,
+  geocodeLocation,
   type Calendar,
   type CalendarEvent,
   type Task,
@@ -43,6 +44,7 @@ import {
   type Mask,
   type MaskSlot,
   type GhostPlacement,
+  type GeocodeResult,
 } from "../../api/calendar";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -174,6 +176,86 @@ function Backdrop({ children, onClose }: { children: React.ReactNode; onClose: (
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       {children}
+    </div>
+  );
+}
+
+// ─── Location autocomplete input ──────────────────────────────────────────────
+
+type LocationInputProps = {
+  value: string;
+  onChange: (value: string) => void;
+  onSelect: (result: GeocodeResult) => void;
+  placeholder?: string;
+};
+
+function LocationInput({ value, onChange, onSelect, placeholder = "Lieu (optionnel)" }: LocationInputProps) {
+  const [results, setResults] = useState<GeocodeResult[]>([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  function handleChange(v: string) {
+    onChange(v);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (!v.trim() || v.trim().length < 3) { setResults([]); setOpen(false); return; }
+    timerRef.current = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const res = await geocodeLocation(v.trim());
+        setResults(res);
+        setOpen(res.length > 0);
+      } finally {
+        setLoading(false);
+      }
+    }, 400);
+  }
+
+  function handleSelect(r: GeocodeResult) {
+    onChange(r.display_name);
+    onSelect(r);
+    setOpen(false);
+    setResults([]);
+  }
+
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  return (
+    <div ref={wrapRef} className="relative flex-1">
+      <div className="flex items-center gap-2">
+        <MapPinIcon className="h-4 w-4 text-white/40 shrink-0" />
+        <input
+          value={value}
+          onChange={(e) => handleChange(e.target.value)}
+          onFocus={() => results.length > 0 && setOpen(true)}
+          className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/30"
+          placeholder={placeholder}
+          autoComplete="off"
+        />
+        {loading && <span className="text-[10px] text-white/30 shrink-0">…</span>}
+      </div>
+      {open && results.length > 0 && (
+        <div className="absolute left-7 right-0 top-full mt-1 z-50 bg-neutral-900 border border-white/10 rounded-lg shadow-xl overflow-hidden">
+          {results.map((r, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => handleSelect(r)}
+              className="w-full text-left px-3 py-2 text-xs text-white/70 hover:bg-white/5 hover:text-white transition-colors border-b border-white/5 last:border-0"
+            >
+              <span className="block truncate">{r.display_name}</span>
+              <span className="text-[10px] text-white/30">{r.lat.toFixed(4)}, {r.lon.toFixed(4)}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -321,6 +403,8 @@ type EventFormProps = {
     title: string;
     description: string;
     location: string;
+    location_lat: number | null;
+    location_lon: number | null;
     all_day: boolean;
     start_at: string;
     end_at: string;
@@ -363,6 +447,8 @@ function EventFormModal({
     return 60;
   });
   const [location, setLocation] = useState(initial?.location ?? "");
+  const [locationLat, setLocationLat] = useState<number | null>(initial?.location_lat ?? null);
+  const [locationLon, setLocationLon] = useState<number | null>(initial?.location_lon ?? null);
   const [description, setDescription] = useState(initial?.description ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -429,7 +515,7 @@ function EventFormModal({
       const effectiveEnd = durationMode && !allDay ? computedEndAt() : endAt;
       const start = allDay ? `${startAt.slice(0, 10)}T00:00:00.000Z` : new Date(startAt).toISOString();
       const end = allDay ? `${effectiveEnd.slice(0, 10)}T23:59:59.999Z` : new Date(effectiveEnd).toISOString();
-      await onSave({ calendar_id: calendarId, title: title.trim(), description: description.trim(), location: location.trim(), all_day: allDay, start_at: start, end_at: end });
+      await onSave({ calendar_id: calendarId, title: title.trim(), description: description.trim(), location: location.trim(), location_lat: locationLat, location_lon: locationLon, all_day: allDay, start_at: start, end_at: end });
       onClose();
     } catch {
       setError("Erreur lors de la sauvegarde.");
@@ -552,13 +638,19 @@ function EventFormModal({
           </div>
 
           {/* Location */}
-          <div className="flex items-center gap-2">
-            <MapPinIcon className="h-4 w-4 text-white/40 shrink-0" />
-            <input
+          <div className="flex items-start gap-0">
+            <LocationInput
               value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/30"
-              placeholder="Lieu (optionnel)"
+              onChange={(v) => {
+                setLocation(v);
+                // Clear coords if user edits text manually
+                setLocationLat(null);
+                setLocationLon(null);
+              }}
+              onSelect={(r) => {
+                setLocationLat(r.lat);
+                setLocationLon(r.lon);
+              }}
             />
           </div>
 
@@ -607,6 +699,81 @@ function EventFormModal({
         </form>
       </div>
     </Backdrop>
+  );
+}
+
+// ─── Mini map (static OSM tiles) ──────────────────────────────────────────────
+
+function MiniMap({ lat, lon }: { lat: number; lon: number }) {
+  const zoom = 15;
+  // Convert lat/lon to tile coords
+  const n = Math.pow(2, zoom);
+  const x = Math.floor(((lon + 180) / 360) * n);
+  const latRad = (lat * Math.PI) / 180;
+  const y = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n);
+
+  // We show a 3×3 grid of tiles centred on the target tile
+  const tiles: { tx: number; ty: number; col: number; row: number }[] = [];
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      tiles.push({ tx: x + dc, ty: y + dr, col: dc + 1, row: dr + 1 });
+    }
+  }
+
+  // Pixel offset of the exact point within the center tile (tile is 256px)
+  const tileSize = 256;
+  const latFrac = (lat * Math.PI) / 180;
+  const pixX = ((lon + 180) / 360) * n * tileSize - x * tileSize;
+  const pixY = ((1 - Math.log(Math.tan(latFrac) + 1 / Math.cos(latFrac)) / Math.PI) / 2) * n * tileSize - y * tileSize;
+  // In the 3×3 grid the center tile starts at (tileSize, tileSize)
+  const pinX = tileSize + pixX;
+  const pinY = tileSize + pixY;
+
+  return (
+    <div className="relative w-full h-full overflow-hidden bg-neutral-800">
+      {/* 3×3 tile mosaic */}
+      <div
+        className="absolute"
+        style={{
+          width: tileSize * 3,
+          height: tileSize * 3,
+          left: "50%",
+          top: "50%",
+          transform: `translate(${-(pinX)}px, ${-(pinY)}px)`,
+        }}
+      >
+        {tiles.map(({ tx, ty, col, row }) => (
+          <img
+            key={`${col}-${row}`}
+            src={`https://tile.openstreetmap.org/${zoom}/${tx}/${ty}.png`}
+            alt=""
+            width={tileSize}
+            height={tileSize}
+            className="absolute"
+            style={{ left: col * tileSize, top: row * tileSize }}
+            draggable={false}
+          />
+        ))}
+        {/* Pin marker */}
+        <div
+          className="absolute z-10 flex flex-col items-center"
+          style={{ left: pinX, top: pinY, transform: "translate(-50%, -100%)" }}
+        >
+          <div className="w-4 h-4 rounded-full bg-red-500 border-2 border-white shadow-lg" />
+          <div className="w-0.5 h-2 bg-red-500" />
+        </div>
+      </div>
+      {/* OSM attribution */}
+      <a
+        href="https://www.openstreetmap.org"
+        target="_blank"
+        rel="noreferrer"
+        className="absolute bottom-0 right-0 text-[9px] text-black/50 bg-white/70 px-1"
+        onClick={(e) => e.stopPropagation()}
+      >
+        © OpenStreetMap
+      </a>
+    </div>
   );
 }
 
@@ -700,6 +867,11 @@ function EventDetail({ event, calendar, anchorRef, onEdit, onDelete, onClose }: 
           <div className="flex items-center gap-1.5">
             <MapPinIcon className="h-3.5 w-3.5 shrink-0" />
             <span>{event.location}</span>
+          </div>
+        )}
+        {event.location_lat != null && event.location_lon != null && (
+          <div className="mt-2 rounded-lg overflow-hidden border border-white/10 relative h-32">
+            <MiniMap lat={event.location_lat} lon={event.location_lon} />
           </div>
         )}
         {event.description && (
@@ -960,6 +1132,8 @@ function TaskFormModal({ initial, tasks, masks, calendars, onSave, onDelete, onC
   const [title, setTitle] = useState(initial?.title ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [location, setLocation] = useState(initial?.location ?? "");
+  const [locationLat, setLocationLat] = useState<number | null>(initial?.location_lat ?? null);
+  const [locationLon, setLocationLon] = useState<number | null>(initial?.location_lon ?? null);
   const [type, setType] = useState<"fixed" | "dynamic">(initial?.type ?? "fixed");
   const [status, setStatus] = useState<TaskStatus>(initial?.status ?? "todo");
   const [calendarId, setCalendarId] = useState<string | null>(initial?.calendar_id ?? calendars[0]?.calendar_id ?? null);
@@ -986,6 +1160,8 @@ function TaskFormModal({ initial, tasks, masks, calendars, onSave, onDelete, onC
         title: title.trim(),
         notes: notes.trim() || null,
         location: location.trim() || null,
+        location_lat: locationLat,
+        location_lon: locationLon,
         type,
         status,
         start_at: type === "fixed" && !allDay ? new Date(startAt).toISOString() : type === "fixed" && allDay ? `${startAt.slice(0, 10)}T00:00:00.000Z` : null,
@@ -1163,11 +1339,19 @@ function TaskFormModal({ initial, tasks, masks, calendars, onSave, onDelete, onC
           )}
 
           {/* Location */}
-          <div className="flex items-center gap-2">
-            <MapPinIcon className="h-4 w-4 text-white/40 shrink-0" />
-            <input value={location} onChange={(e) => setLocation(e.target.value)}
-              className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/30"
-              placeholder="Lieu (optionnel)" />
+          <div className="flex items-start gap-0">
+            <LocationInput
+              value={location}
+              onChange={(v) => {
+                setLocation(v);
+                setLocationLat(null);
+                setLocationLon(null);
+              }}
+              onSelect={(r) => {
+                setLocationLat(r.lat);
+                setLocationLon(r.lon);
+              }}
+            />
           </div>
 
           {/* Notes */}
@@ -1627,6 +1811,8 @@ export default function CalendarPage() {
     title: string;
     description: string;
     location: string;
+    location_lat: number | null;
+    location_lon: number | null;
     all_day: boolean;
     start_at: string;
     end_at: string;

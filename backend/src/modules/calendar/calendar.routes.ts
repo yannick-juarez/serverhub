@@ -17,6 +17,7 @@ import {
   handleCreateMask,
   handleUpdateMask,
   handleDeleteMask,
+  handleGeocode,
 } from './calendar.controller';
 import { requireAuth } from '../../middleware/auth';
 import { asyncHandler } from '../../middleware/asyncHandler';
@@ -49,5 +50,8 @@ router.get('/masks', asyncHandler(handleListMasks));
 router.post('/masks', asyncHandler(handleCreateMask));
 router.patch('/masks/:maskId', asyncHandler(handleUpdateMask));
 router.delete('/masks/:maskId', asyncHandler(handleDeleteMask));
+
+// Geocode proxy
+router.get('/geocode', asyncHandler(handleGeocode));
 
 export { router as calendarRouter };

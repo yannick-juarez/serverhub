@@ -145,6 +145,8 @@ export type StoredCalendarEvent = {
   title: string;
   description: string | null;
   location: string | null;
+  location_lat: number | null;
+  location_lon: number | null;
   all_day: boolean;
   start_at: string;
   end_at: string;
@@ -188,6 +190,8 @@ export type StoredTask = {
   title: string;
   notes: string | null;
   location: string | null;
+  location_lat: number | null;
+  location_lon: number | null;
   type: TaskType;
   status: TaskStatus;
 
