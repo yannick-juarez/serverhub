@@ -354,10 +354,60 @@ function EventFormModal({
   const [endAt, setEndAt] = useState(
     initial ? (initial.all_day ? startOfDay(initial.end_at) : initial.end_at.slice(0, 16)) : (allDay ? baseDate : defaultEnd)
   );
+  // Duration mode: when true, show a duration input that drives endAt
+  const [durationMode, setDurationMode] = useState(false);
+  const [durationMin, setDurationMin] = useState(() => {
+    if (initial && !initial.all_day) {
+      return Math.max(15, Math.round((new Date(initial.end_at).getTime() - new Date(initial.start_at).getTime()) / 60000));
+    }
+    return 60;
+  });
   const [location, setLocation] = useState(initial?.location ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Keep endAt in sync when duration mode is active and startAt changes
+  function computedEndAt(): string {
+    if (allDay || !durationMode) return endAt;
+    try {
+      const s = new Date(startAt);
+      if (isNaN(s.getTime())) return endAt;
+      return toLocalDatetimeStr(new Date(s.getTime() + durationMin * 60000));
+    } catch {
+      return endAt;
+    }
+  }
+
+  function handleStartChange(val: string) {
+    setStartAt(val);
+    if (!allDay && durationMode) {
+      try {
+        const s = new Date(val);
+        if (!isNaN(s.getTime())) setEndAt(toLocalDatetimeStr(new Date(s.getTime() + durationMin * 60000)));
+      } catch { /* ignore */ }
+    }
+  }
+
+  function handleDurationChange(val: string) {
+    const mins = Math.max(5, parseInt(val) || 15);
+    setDurationMin(mins);
+    try {
+      const s = new Date(startAt);
+      if (!isNaN(s.getTime())) setEndAt(toLocalDatetimeStr(new Date(s.getTime() + mins * 60000)));
+    } catch { /* ignore */ }
+  }
+
+  function handleEndChange(val: string) {
+    setEndAt(val);
+    try {
+      const s = new Date(startAt);
+      const e = new Date(val);
+      if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e > s) {
+        setDurationMin(Math.round((e.getTime() - s.getTime()) / 60000));
+      }
+    } catch { /* ignore */ }
+  }
 
   function toggleAllDay(checked: boolean) {
     setAllDay(checked);
@@ -376,8 +426,9 @@ function EventFormModal({
     if (!calendarId) { setError("Sélectionnez un calendrier."); return; }
     setSaving(true);
     try {
+      const effectiveEnd = durationMode && !allDay ? computedEndAt() : endAt;
       const start = allDay ? `${startAt.slice(0, 10)}T00:00:00.000Z` : new Date(startAt).toISOString();
-      const end = allDay ? `${endAt.slice(0, 10)}T23:59:59.999Z` : new Date(endAt).toISOString();
+      const end = allDay ? `${effectiveEnd.slice(0, 10)}T23:59:59.999Z` : new Date(effectiveEnd).toISOString();
       await onSave({ calendar_id: calendarId, title: title.trim(), description: description.trim(), location: location.trim(), all_day: allDay, start_at: start, end_at: end });
       onClose();
     } catch {
@@ -449,26 +500,55 @@ function EventFormModal({
             <span className="text-xs text-white/60">Journée entière</span>
           </label>
 
-          {/* Date/time */}
-          <div className="grid grid-cols-2 gap-2">
+          {/* Date/time + duration toggle */}
+          {!allDay && (
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs text-white/40">Horaires</span>
+              <div className="flex items-center gap-1 border border-white/10 rounded overflow-hidden text-[10px]">
+                <button type="button" onClick={() => setDurationMode(false)}
+                  className={`px-2 py-0.5 transition-colors ${!durationMode ? "bg-white/10 text-white" : "text-white/30 hover:text-white/60"}`}>
+                  Date de fin
+                </button>
+                <button type="button" onClick={() => setDurationMode(true)}
+                  className={`px-2 py-0.5 transition-colors ${durationMode ? "bg-white/10 text-white" : "text-white/30 hover:text-white/60"}`}>
+                  Durée
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className={`grid gap-2 ${!allDay && durationMode ? "grid-cols-2" : "grid-cols-2"}`}>
             <div>
               <label className="block text-xs text-white/40 mb-1">Début</label>
               <input
                 type={allDay ? "date" : "datetime-local"}
                 value={startAt}
-                onChange={(e) => setStartAt(e.target.value)}
+                onChange={(e) => handleStartChange(e.target.value)}
                 className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-white/30 [color-scheme:dark]"
               />
             </div>
-            <div>
-              <label className="block text-xs text-white/40 mb-1">Fin</label>
-              <input
-                type={allDay ? "date" : "datetime-local"}
-                value={endAt}
-                onChange={(e) => setEndAt(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-white/30 [color-scheme:dark]"
-              />
-            </div>
+            {!allDay && durationMode ? (
+              <div>
+                <label className="block text-xs text-white/40 mb-1">Durée (min)</label>
+                <input
+                  type="number" min="5" step="5"
+                  value={durationMin}
+                  onChange={(e) => handleDurationChange(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none [color-scheme:dark]"
+                />
+                <p className="text-[10px] text-white/25 mt-0.5">→ fin {computedEndAt().slice(11, 16)}</p>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-xs text-white/40 mb-1">Fin</label>
+                <input
+                  type={allDay ? "date" : "datetime-local"}
+                  value={endAt}
+                  onChange={(e) => handleEndChange(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-white/30 [color-scheme:dark]"
+                />
+              </div>
+            )}
           </div>
 
           {/* Location */}
