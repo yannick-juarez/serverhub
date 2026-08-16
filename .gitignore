@@ -22,3 +22,8 @@ frontend/node_modules/
 .DS_Store
 *.suo
 *.sw?
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+send_nmrc_backup_to_nas.log
