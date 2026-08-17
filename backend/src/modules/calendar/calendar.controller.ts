@@ -154,8 +154,10 @@ export async function handleCreateTask(req: Request, res: Response): Promise<voi
     all_day: (body.all_day as boolean) ?? false,
     duration_minutes: (body.duration_minutes as number) ?? null,
     deadline: (body.deadline as string) ?? null,
+    deadline_event_id: (body.deadline_event_id as string) ?? null,
     mask_id: (body.mask_id as string) ?? null,
     dependencies: (body.dependencies as string[]) ?? [],
+    dependency_event_ids: (body.dependency_event_ids as string[]) ?? [],
     priority: (body.priority as number) ?? 0,
   });
 

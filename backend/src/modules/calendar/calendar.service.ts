@@ -345,33 +345,49 @@ export type GhostPlacement = {
 export async function computeGhostPlacements(): Promise<GhostPlacement[]> {
   const storage = await readStorage();
   const tasks = storage.calendar.tasks ?? [];
+  const events = storage.calendar.events ?? [];
   const masks = storage.calendar.masks ?? [];
 
   const doneTasks = new Set(tasks.filter((t) => t.status === 'done').map((t) => t.task_id));
+
+  // An event-based dependency is "done" when the event's start time has passed
+  const now = new Date();
+  const passedEvents = new Set(events.filter((e) => new Date(e.start_at) <= now).map((e) => e.event_id));
 
   const unlockedDynamic = tasks.filter(
     (t) =>
       t.type === 'dynamic' &&
       t.status === 'todo' &&
       t.duration_minutes != null &&
-      t.dependencies.every((dep) => doneTasks.has(dep)),
+      t.dependencies.every((dep) => doneTasks.has(dep)) &&
+      (t.dependency_event_ids ?? []).every((eid) => passedEvents.has(eid)),
   );
+
+  // Resolve effective deadline: prefer event-linked deadline
+  function effectiveDeadline(t: typeof tasks[number]): string | null {
+    if (t.deadline_event_id) {
+      const ev = events.find((e) => e.event_id === t.deadline_event_id);
+      if (ev) return ev.start_at;
+    }
+    return t.deadline ?? null;
+  }
 
   // Sort by priority desc, then deadline asc
   unlockedDynamic.sort((a, b) => {
     if (b.priority !== a.priority) return b.priority - a.priority;
-    if (a.deadline && b.deadline) return a.deadline.localeCompare(b.deadline);
-    if (a.deadline) return -1;
-    if (b.deadline) return 1;
+    const da = effectiveDeadline(a);
+    const db = effectiveDeadline(b);
+    if (da && db) return da.localeCompare(db);
+    if (da) return -1;
+    if (db) return 1;
     return 0;
   });
 
-  const now = new Date();
   // Track occupied slots to avoid overlaps between ghost placements
   const occupied: { start: Date; end: Date }[] = [];
 
   // Also account for existing fixed events
-  for (const ev of storage.calendar.events) {
+  for (const ev of events) {
     occupied.push({ start: new Date(ev.start_at), end: new Date(ev.end_at) });
   }
   // Fixed tasks
@@ -385,7 +401,7 @@ export async function computeGhostPlacements(): Promise<GhostPlacement[]> {
 
   for (const task of unlockedDynamic) {
     const durationMs = (task.duration_minutes ?? 30) * 60 * 1000;
-    const deadlineDate = task.deadline ? new Date(task.deadline) : null;
+    const deadlineDate = effectiveDeadline(task) ? new Date(effectiveDeadline(task)!) : null;
 
     const maskSlots = task.mask_id
       ? resolveMaskSlots(task.mask_id, masks)

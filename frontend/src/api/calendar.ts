@@ -139,8 +139,10 @@ export type Task = {
   // Dynamic
   duration_minutes: number | null;
   deadline: string | null;
+  deadline_event_id: string | null;
   mask_id: string | null;
   dependencies: string[];
+  dependency_event_ids: string[];
   priority: number;
   created_at: string;
   updated_at: string;

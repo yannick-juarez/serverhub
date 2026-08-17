@@ -202,10 +202,12 @@ export type StoredTask = {
 
   // Dynamic-task fields (used when type === 'dynamic')
   duration_minutes: number | null;
-  deadline: string | null;       // ISO datetime — soft deadline
-  mask_id: string | null;        // availability mask to respect
-  dependencies: string[];        // task_ids that must be 'done' first
-  priority: number;              // 0 = normal, higher = more urgent
+  deadline: string | null;              // ISO datetime — soft deadline (manual)
+  deadline_event_id: string | null;     // link deadline to a calendar event's start
+  mask_id: string | null;               // availability mask to respect
+  dependencies: string[];               // task_ids that must be 'done' first
+  dependency_event_ids: string[];       // event_ids that must have started/passed first
+  priority: number;                     // 0 = normal, higher = more urgent
 
   created_at: string;
   updated_at: string;
@@ -241,6 +243,20 @@ export type StorageData = {
 function nowIso(): string {
   return new Date().toISOString();
 }
+
+const NATIVE_MASKS: StoredMask[] = (() => {
+  const now = new Date().toISOString();
+  return [
+    { mask_id: 'native-morning',   name: 'Matin',      type: 'native', slots: [0,1,2,3,4,5,6].map(day => ({ day, start: '06:00', end: '12:00' })), operations: [], created_at: now, updated_at: now },
+    { mask_id: 'native-noon',      name: 'Midi',       type: 'native', slots: [0,1,2,3,4,5,6].map(day => ({ day, start: '12:00', end: '14:00' })), operations: [], created_at: now, updated_at: now },
+    { mask_id: 'native-afternoon', name: 'Après-midi', type: 'native', slots: [0,1,2,3,4,5,6].map(day => ({ day, start: '14:00', end: '19:00' })), operations: [], created_at: now, updated_at: now },
+    { mask_id: 'native-dinner',    name: 'Dîner',      type: 'native', slots: [0,1,2,3,4,5,6].map(day => ({ day, start: '19:00', end: '21:00' })), operations: [], created_at: now, updated_at: now },
+    { mask_id: 'native-evening',   name: 'Soirée',     type: 'native', slots: [0,1,2,3,4,5,6].map(day => ({ day, start: '21:00', end: '23:00' })), operations: [], created_at: now, updated_at: now },
+    { mask_id: 'native-day',       name: 'Journée',    type: 'native', slots: [0,1,2,3,4,5,6].map(day => ({ day, start: '08:00', end: '20:00' })), operations: [], created_at: now, updated_at: now },
+    { mask_id: 'native-week',      name: 'Semaine',    type: 'native', slots: [1,2,3,4,5].map(day => ({ day, start: '08:00', end: '20:00' })),     operations: [], created_at: now, updated_at: now },
+    { mask_id: 'native-weekend',   name: 'Week-end',   type: 'native', slots: [0,6].map(day => ({ day, start: '08:00', end: '22:00' })),           operations: [], created_at: now, updated_at: now },
+  ];
+})();
 
 function defaultStorage(): StorageData {
   const now = nowIso();
@@ -372,80 +388,7 @@ function defaultStorage(): StorageData {
       ],
       events: [],
       tasks: [],
-      masks: [
-        {
-          mask_id: 'native-morning',
-          name: 'Matin',
-          type: 'native',
-          slots: [0,1,2,3,4,5,6].map(day => ({ day, start: '06:00', end: '12:00' })),
-          operations: [],
-          created_at: now,
-          updated_at: now,
-        },
-        {
-          mask_id: 'native-noon',
-          name: 'Midi',
-          type: 'native',
-          slots: [0,1,2,3,4,5,6].map(day => ({ day, start: '12:00', end: '14:00' })),
-          operations: [],
-          created_at: now,
-          updated_at: now,
-        },
-        {
-          mask_id: 'native-afternoon',
-          name: 'Après-midi',
-          type: 'native',
-          slots: [0,1,2,3,4,5,6].map(day => ({ day, start: '14:00', end: '19:00' })),
-          operations: [],
-          created_at: now,
-          updated_at: now,
-        },
-        {
-          mask_id: 'native-dinner',
-          name: 'Dîner',
-          type: 'native',
-          slots: [0,1,2,3,4,5,6].map(day => ({ day, start: '19:00', end: '21:00' })),
-          operations: [],
-          created_at: now,
-          updated_at: now,
-        },
-        {
-          mask_id: 'native-evening',
-          name: 'Soirée',
-          type: 'native',
-          slots: [0,1,2,3,4,5,6].map(day => ({ day, start: '21:00', end: '23:00' })),
-          operations: [],
-          created_at: now,
-          updated_at: now,
-        },
-        {
-          mask_id: 'native-day',
-          name: 'Journée',
-          type: 'native',
-          slots: [1,2,3,4,5].map(day => ({ day, start: '08:00', end: '20:00' })),
-          operations: [],
-          created_at: now,
-          updated_at: now,
-        },
-        {
-          mask_id: 'native-week',
-          name: 'Semaine',
-          type: 'native',
-          slots: [1,2,3,4,5].map(day => ({ day, start: '08:00', end: '20:00' })),
-          operations: [],
-          created_at: now,
-          updated_at: now,
-        },
-        {
-          mask_id: 'native-weekend',
-          name: 'Week-end',
-          type: 'native',
-          slots: [0,6].map(day => ({ day, start: '08:00', end: '22:00' })),
-          operations: [],
-          created_at: now,
-          updated_at: now,
-        },
-      ],
+      masks: NATIVE_MASKS,
     },
   };
 }
@@ -547,7 +490,20 @@ function tryMigrateJson(): StorageData | null {
 
 function ensureSeed(): void {
   const db = getDb();
-  if (!isDbEmpty(db)) return;
+  if (!isDbEmpty(db)) {
+    // Even on existing DBs, upsert native masks so they always appear
+    const data = readStorageSync(db);
+    const existingIds = new Set(data.calendar.masks.map(m => m.mask_id));
+    const missing = NATIVE_MASKS.filter(m => !existingIds.has(m.mask_id));
+    if (missing.length > 0) {
+      writeStorageSync(db, {
+        ...data,
+        calendar: { ...data.calendar, masks: [...missing, ...data.calendar.masks] },
+      });
+      console.log(`[storage] Injected ${missing.length} native mask(s)`);
+    }
+    return;
+  }
 
   const migrated = tryMigrateJson();
   writeStorageSync(db, migrated ?? defaultStorage());

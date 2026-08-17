@@ -514,7 +514,8 @@ function EventFormModal({
     try {
       const effectiveEnd = durationMode && !allDay ? computedEndAt() : endAt;
       const start = allDay ? `${startAt.slice(0, 10)}T00:00:00.000Z` : new Date(startAt).toISOString();
-      const end = allDay ? `${effectiveEnd.slice(0, 10)}T23:59:59.999Z` : new Date(effectiveEnd).toISOString();
+      // For all-day: use same date as start, end at 23:59 local = store as local date sentinel
+      const end = allDay ? `${startAt.slice(0, 10)}T23:59:59.000Z` : new Date(effectiveEnd).toISOString();
       await onSave({ calendar_id: calendarId, title: title.trim(), description: description.trim(), location: location.trim(), location_lat: locationLat, location_lon: locationLon, all_day: allDay, start_at: start, end_at: end });
       onClose();
     } catch {
@@ -603,7 +604,7 @@ function EventFormModal({
             </div>
           )}
 
-          <div className={`grid gap-2 ${!allDay && durationMode ? "grid-cols-2" : "grid-cols-2"}`}>
+          <div className={`grid gap-2 ${allDay ? "grid-cols-1" : "grid-cols-2"}`}>
             <div>
               <label className="block text-xs text-white/40 mb-1">Début</label>
               <input
@@ -643,7 +644,6 @@ function EventFormModal({
               value={location}
               onChange={(v) => {
                 setLocation(v);
-                // Clear coords if user edits text manually
                 setLocationLat(null);
                 setLocationLon(null);
               }}
@@ -902,9 +902,10 @@ type TimeGridProps = {
 type TimeGridWithGhostsProps = TimeGridProps & {
   ghosts: GhostPlacement[];
   tasks: Task[];
+  allEvents: CalendarEvent[];
 };
 
-function TimeGridViewWithGhosts({ days, visibleEvents, calendarMap, today, onClickSlot, onClickEvent, ghosts, tasks }: TimeGridWithGhostsProps) {
+function TimeGridViewWithGhosts({ days, visibleEvents, calendarMap, today, onClickSlot, onClickEvent, ghosts, tasks, allEvents }: TimeGridWithGhostsProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const totalH = 24 * PX_PER_HOUR;
 
@@ -919,7 +920,12 @@ function TimeGridViewWithGhosts({ days, visibleEvents, calendarMap, today, onCli
   function eventsForDay(day: Date): CalendarEvent[] {
     const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate());
     const dayEnd = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59, 999);
+    const dayDateStr = `${day.getFullYear()}-${String(day.getMonth()+1).padStart(2,'0')}-${String(day.getDate()).padStart(2,'0')}`;
     return visibleEvents.filter((ev) => {
+      if (ev.all_day) {
+        // Compare by date string to avoid timezone shift
+        return ev.start_at.slice(0, 10) <= dayDateStr && ev.end_at.slice(0, 10) >= dayDateStr;
+      }
       const s = new Date(ev.start_at);
       const e = new Date(ev.end_at);
       return s <= dayEnd && e >= dayStart;
@@ -939,11 +945,22 @@ function TimeGridViewWithGhosts({ days, visibleEvents, calendarMap, today, onCli
     });
   }
 
-  function deadlinesForDay(day: Date): Task[] {
-    return tasks.filter((t) => {
-      if (!t.deadline) return false;
-      const d = new Date(t.deadline);
-      return d.getFullYear() === day.getFullYear() && d.getMonth() === day.getMonth() && d.getDate() === day.getDate();
+  function deadlinesForDay(day: Date): { task: Task; deadlineISO: string }[] {
+    return tasks.flatMap((t) => {
+      // Resolve effective deadline
+      let deadlineISO: string | null = null;
+      if (t.deadline_event_id) {
+        const ev = allEvents.find(e => e.event_id === t.deadline_event_id);
+        if (ev) deadlineISO = ev.start_at;
+      } else if (t.deadline) {
+        deadlineISO = t.deadline;
+      }
+      if (!deadlineISO) return [];
+      const d = new Date(deadlineISO);
+      if (d.getFullYear() === day.getFullYear() && d.getMonth() === day.getMonth() && d.getDate() === day.getDate()) {
+        return [{ task: t, deadlineISO }];
+      }
+      return [];
     });
   }
 
@@ -1034,8 +1051,8 @@ function TimeGridViewWithGhosts({ days, visibleEvents, calendarMap, today, onCli
               )}
 
               {/* Deadline lines */}
-              {dayDeadlines.map((t) => {
-                const dl = new Date(t.deadline!);
+              {dayDeadlines.map(({ task: t, deadlineISO }) => {
+                const dl = new Date(deadlineISO);
                 const y = (dl.getHours() * 60 + dl.getMinutes()) / 60 * PX_PER_HOUR;
                 return (
                   <div key={t.task_id} className="absolute left-0 right-0 z-30 flex items-center pointer-events-none" style={{ top: y }}>
@@ -1102,6 +1119,134 @@ function TimeGridViewWithGhosts({ days, visibleEvents, calendarMap, today, onCli
   );
 }
 
+// ─── LinkedDateInput ──────────────────────────────────────────────────────────
+// Smart date/event input: type an event title → suggest matching events,
+// type a date/number → suggest a hard date. On select, calls onSelect with
+// a resolved ISO string and an optional linked event id.
+
+type LinkedDateSuggestion =
+  | { kind: "event"; event: CalendarEvent }
+  | { kind: "date"; iso: string; label: string };
+
+type LinkedDateInputProps = {
+  label: string;
+  value: string;           // display string shown in the input
+  linkedEventId: string | null;
+  events: CalendarEvent[];
+  onChange: (display: string) => void;
+  onSelect: (iso: string, eventId: string | null) => void;
+  onClear: () => void;
+};
+
+function LinkedDateInput({ label, value, linkedEventId, events, onChange, onSelect, onClear }: LinkedDateInputProps) {
+  const [open, setOpen] = useState(false);
+  const [suggestions, setSuggestions] = useState<LinkedDateSuggestion[]>([]);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  function compute(q: string) {
+    if (!q.trim()) { setSuggestions([]); setOpen(false); return; }
+    const results: LinkedDateSuggestion[] = [];
+    // Date suggestions: if input looks like a date fragment
+    const dateMatch = q.match(/(\d{1,2})[/\-.](\d{1,2})(?:[/\-.](\d{2,4}))?/);
+    if (dateMatch) {
+      const [, d, m, y] = dateMatch;
+      const year = y ? (y.length === 2 ? 2000 + parseInt(y) : parseInt(y)) : new Date().getFullYear();
+      const candidate = new Date(year, parseInt(m) - 1, parseInt(d), 0, 0, 0);
+      if (!isNaN(candidate.getTime())) {
+        results.push({ kind: "date", iso: candidate.toISOString(), label: candidate.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) });
+      }
+    }
+    // Event suggestions: fuzzy match on title
+    const lower = q.toLowerCase();
+    events
+      .filter((ev) => ev.title.toLowerCase().includes(lower))
+      .sort((a, b) => a.start_at.localeCompare(b.start_at))
+      .slice(0, 6)
+      .forEach((ev) => results.push({ kind: "event", event: ev }));
+    setSuggestions(results);
+    setOpen(results.length > 0);
+  }
+
+  function handleChange(v: string) {
+    onChange(v);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => compute(v), 200);
+  }
+
+  function pick(s: LinkedDateSuggestion) {
+    if (s.kind === "event") {
+      onChange(`📅 ${s.event.title}`);
+      onSelect(s.event.start_at, s.event.event_id);
+    } else {
+      onChange(s.label);
+      onSelect(s.iso, null);
+    }
+    setOpen(false);
+    setSuggestions([]);
+  }
+
+  const linkedEvent = linkedEventId ? events.find((e) => e.event_id === linkedEventId) : null;
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <label className="block text-xs text-white/40 mb-1">{label}</label>
+      <div className="flex items-center gap-1">
+        <input
+          value={value}
+          onChange={(e) => handleChange(e.target.value)}
+          onFocus={() => suggestions.length > 0 && setOpen(true)}
+          placeholder="Nom d'un event ou date (ex: 31/08)"
+          className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white placeholder:text-white/25 focus:outline-none focus:border-white/30 [color-scheme:dark]"
+          autoComplete="off"
+        />
+        {(value || linkedEventId) && (
+          <button type="button" onClick={() => { onClear(); onChange(""); setSuggestions([]); setOpen(false); }}
+            className="text-white/30 hover:text-white/70 transition-colors shrink-0">
+            <XMarkIcon className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+      {linkedEvent && (
+        <p className="text-[10px] text-purple-300/70 mt-0.5">
+          → {linkedEvent.title} · {new Date(linkedEvent.start_at).toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" })}
+        </p>
+      )}
+      {open && suggestions.length > 0 && (
+        <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-neutral-900 border border-white/10 rounded-lg shadow-xl overflow-hidden">
+          {suggestions.map((s, i) => (
+            <button key={i} type="button" onClick={() => pick(s)}
+              className="w-full text-left px-3 py-2 text-xs hover:bg-white/5 border-b border-white/5 last:border-0 transition-colors">
+              {s.kind === "event" ? (
+                <span className="flex items-center gap-2">
+                  <span className="text-purple-300">📅</span>
+                  <span className="text-white/80 truncate flex-1">{s.event.title}</span>
+                  <span className="text-white/30 shrink-0 text-[10px]">
+                    {new Date(s.event.start_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" })}
+                  </span>
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <span className="text-blue-300">📆</span>
+                  <span className="text-white/80">{s.label}</span>
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Task form modal ──────────────────────────────────────────────────────────
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -1123,32 +1268,54 @@ type TaskFormProps = {
   tasks: Task[];
   masks: Mask[];
   calendars: Calendar[];
+  events: CalendarEvent[];
   onSave: (data: Omit<Task, "task_id" | "created_at" | "updated_at">) => Promise<void>;
   onDelete?: () => Promise<void>;
   onClose: () => void;
 };
 
-function TaskFormModal({ initial, tasks, masks, calendars, onSave, onDelete, onClose }: TaskFormProps) {
+function TaskFormModal({ initial, tasks, masks, calendars, events, onSave, onDelete, onClose }: TaskFormProps) {
   const [title, setTitle] = useState(initial?.title ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [location, setLocation] = useState(initial?.location ?? "");
   const [locationLat, setLocationLat] = useState<number | null>(initial?.location_lat ?? null);
   const [locationLon, setLocationLon] = useState<number | null>(initial?.location_lon ?? null);
-  const [type, setType] = useState<"fixed" | "dynamic">(initial?.type ?? "fixed");
   const [status, setStatus] = useState<TaskStatus>(initial?.status ?? "todo");
   const [calendarId, setCalendarId] = useState<string | null>(initial?.calendar_id ?? calendars[0]?.calendar_id ?? null);
-  // fixed
-  const [startAt, setStartAt] = useState(initial?.start_at ? initial.start_at.slice(0, 16) : toLocalDatetimeStr(new Date()));
-  const [endAt, setEndAt] = useState(initial?.end_at ? initial.end_at.slice(0, 16) : toLocalDatetimeStr(new Date(Date.now() + 3600000)));
-  const [allDay, setAllDay] = useState(initial?.all_day ?? false);
-  // dynamic
   const [durationMinutes, setDurationMinutes] = useState(String(initial?.duration_minutes ?? 30));
-  const [deadline, setDeadline] = useState(initial?.deadline ? initial.deadline.slice(0, 16) : "");
-  const [maskId, setMaskId] = useState(initial?.mask_id ?? "");
-  const [dependencies, setDependencies] = useState<string[]>(initial?.dependencies ?? []);
   const [priority, setPriority] = useState(String(initial?.priority ?? 0));
+  const [maskId, setMaskId] = useState(initial?.mask_id ?? "");
+
+  // Deadline: display value + resolved ISO + optional linked event id
+  const [deadlineDisplay, setDeadlineDisplay] = useState<string>(() => {
+    if (initial?.deadline_event_id) {
+      const ev = events.find(e => e.event_id === initial.deadline_event_id);
+      return ev ? `📅 ${ev.title}` : "";
+    }
+    if (initial?.deadline) return new Date(initial.deadline).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+    return "";
+  });
+  const [deadlineIso, setDeadlineIso] = useState<string | null>(initial?.deadline ?? null);
+  const [deadlineEventId, setDeadlineEventId] = useState<string | null>(initial?.deadline_event_id ?? null);
+
+  // Requirements (event-linked OR task-linked)
+  const [dependencies, setDependencies] = useState<string[]>(initial?.dependencies ?? []);
+  const [dependencyEventIds, setDependencyEventIds] = useState<string[]>(initial?.dependency_event_ids ?? []);
+  // For adding a new requirement via LinkedDateInput (used as event picker only here)
+  const [reqDisplay, setReqDisplay] = useState("");
+  const [reqEventId, setReqEventId] = useState<string | null>(null);
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function addRequirement() {
+    if (!reqEventId) return;
+    if (!dependencyEventIds.includes(reqEventId)) {
+      setDependencyEventIds([...dependencyEventIds, reqEventId]);
+    }
+    setReqDisplay("");
+    setReqEventId(null);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -1162,15 +1329,17 @@ function TaskFormModal({ initial, tasks, masks, calendars, onSave, onDelete, onC
         location: location.trim() || null,
         location_lat: locationLat,
         location_lon: locationLon,
-        type,
+        type: "dynamic",
         status,
-        start_at: type === "fixed" && !allDay ? new Date(startAt).toISOString() : type === "fixed" && allDay ? `${startAt.slice(0, 10)}T00:00:00.000Z` : null,
-        end_at: type === "fixed" && !allDay ? new Date(endAt).toISOString() : type === "fixed" && allDay ? `${endAt.slice(0, 10)}T23:59:59.999Z` : null,
-        all_day: type === "fixed" ? allDay : false,
-        duration_minutes: type === "dynamic" ? (parseInt(durationMinutes) || 30) : null,
-        deadline: deadline ? new Date(deadline).toISOString() : null,
-        mask_id: type === "dynamic" && maskId ? maskId : null,
-        dependencies: type === "dynamic" ? dependencies : [],
+        start_at: null,
+        end_at: null,
+        all_day: false,
+        duration_minutes: parseInt(durationMinutes) || 30,
+        deadline: deadlineEventId ? null : deadlineIso,
+        deadline_event_id: deadlineEventId,
+        mask_id: maskId || null,
+        dependencies,
+        dependency_event_ids: dependencyEventIds,
         priority: parseInt(priority) || 0,
       });
       onClose();
@@ -1197,161 +1366,138 @@ function TaskFormModal({ initial, tasks, masks, calendars, onSave, onDelete, onC
 
         <form onSubmit={handleSubmit} className="space-y-3">
           {/* Title */}
-          <input
-            autoFocus
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
+          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)}
             className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-sky-500/60"
-            placeholder="Titre de la tâche"
-          />
+            placeholder="Titre de la tâche" />
 
-          {/* Type toggle */}
-          <div className="flex items-center gap-1 border border-white/10 rounded-lg overflow-hidden text-xs">
-            {(["fixed", "dynamic"] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setType(t)}
-                className={`flex-1 py-2 transition-colors ${type === t ? "bg-white/10 text-white" : "text-white/40 hover:text-white/70"}`}
-              >
-                {t === "fixed" ? "🔒 Fixe (RDV)" : "⚡ Dynamique (ASAP)"}
-              </button>
-            ))}
+          {/* Status + Calendar */}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-white/40 shrink-0">Statut</label>
+              <select value={status} onChange={(e) => setStatus(e.target.value as TaskStatus)}
+                className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none appearance-none">
+                {(["todo", "in_progress", "done", "failed"] as TaskStatus[]).map((s) => (
+                  <option key={s} value={s} style={{ background: "#171717" }}>{STATUS_LABELS[s]}</option>
+                ))}
+              </select>
+            </div>
+            {calendars.length > 0 && (
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-white/40 shrink-0">Agenda</label>
+                <select value={calendarId ?? ""} onChange={(e) => setCalendarId(e.target.value || null)}
+                  className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none appearance-none">
+                  <option value="" style={{ background: "#171717" }}>— aucun —</option>
+                  {calendars.map((c) => (
+                    <option key={c.calendar_id} value={c.calendar_id} style={{ background: "#171717" }}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
-          {/* Status */}
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-white/40 w-14 shrink-0">Statut</label>
-            <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value as TaskStatus)}
-              className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none appearance-none"
-            >
-              {(["todo", "in_progress", "done", "failed"] as TaskStatus[]).map((s) => (
-                <option key={s} value={s} style={{ background: "#171717" }}>{STATUS_LABELS[s]}</option>
+          {/* Duration + Priority */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Durée (min)</label>
+              <input type="number" min="5" step="5" value={durationMinutes} onChange={(e) => setDurationMinutes(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none" />
+            </div>
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Priorité (0-10)</label>
+              <input type="number" min="0" max="10" value={priority} onChange={(e) => setPriority(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none" />
+            </div>
+          </div>
+
+          {/* Mask */}
+          <div>
+            <label className="block text-xs text-white/40 mb-1">Plage horaire (mask)</label>
+            <select value={maskId} onChange={(e) => setMaskId(e.target.value)}
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none appearance-none">
+              <option value="" style={{ background: "#171717" }}>— aucun (libre) —</option>
+              {masks.map((m) => (
+                <option key={m.mask_id} value={m.mask_id} style={{ background: "#171717" }}>{m.name}</option>
               ))}
             </select>
           </div>
 
-          {/* Calendar */}
-          {calendars.length > 0 && (
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-white/40 w-14 shrink-0">Agenda</label>
-              <select
-                value={calendarId ?? ""}
-                onChange={(e) => setCalendarId(e.target.value || null)}
-                className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none appearance-none"
-              >
-                <option value="" style={{ background: "#171717" }}>— aucun —</option>
-                {calendars.map((c) => (
-                  <option key={c.calendar_id} value={c.calendar_id} style={{ background: "#171717" }}>{c.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
+          {/* Deadline */}
+          <LinkedDateInput
+            label="Deadline (optionnel)"
+            value={deadlineDisplay}
+            linkedEventId={deadlineEventId}
+            events={events}
+            onChange={setDeadlineDisplay}
+            onSelect={(iso, evId) => { setDeadlineIso(iso); setDeadlineEventId(evId); }}
+            onClear={() => { setDeadlineIso(null); setDeadlineEventId(null); }}
+          />
 
-          {/* Fixed: date/time */}
-          {type === "fixed" && (
-            <>
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <div
-                  className={`relative w-8 h-4 rounded-full transition-colors ${allDay ? "bg-white/80" : "bg-white/10"}`}
-                  onClick={() => setAllDay(!allDay)}
-                >
-                  <div className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform ${allDay ? "translate-x-4" : "translate-x-0.5"}`} />
-                </div>
-                <span className="text-xs text-white/60">Journée entière</span>
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-xs text-white/40 mb-1">Début</label>
-                  <input type={allDay ? "date" : "datetime-local"} value={startAt.slice(0, allDay ? 10 : 16)} onChange={(e) => setStartAt(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none [color-scheme:dark]" />
-                </div>
-                <div>
-                  <label className="block text-xs text-white/40 mb-1">Fin</label>
-                  <input type={allDay ? "date" : "datetime-local"} value={endAt.slice(0, allDay ? 10 : 16)} onChange={(e) => setEndAt(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none [color-scheme:dark]" />
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* Deadline — available for both fixed and dynamic */}
+          {/* Requirements */}
           <div>
-            <label className="block text-xs text-white/40 mb-1">
-              {type === "fixed" ? "Deadline de préparation (optionnel)" : "Deadline (optionnel)"}
-            </label>
-            <input type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none [color-scheme:dark]" />
+            <label className="block text-xs text-white/40 mb-1">Prérequis (optionnel)</label>
+            {/* Add via linked input */}
+            <div className="flex gap-1 mb-2">
+              <div className="flex-1 relative">
+                <LinkedDateInput
+                  label=""
+                  value={reqDisplay}
+                  linkedEventId={reqEventId}
+                  events={events}
+                  onChange={setReqDisplay}
+                  onSelect={(_iso, evId) => { setReqEventId(evId); }}
+                  onClear={() => { setReqDisplay(""); setReqEventId(null); }}
+                />
+              </div>
+              <button type="button" onClick={addRequirement} disabled={!reqEventId}
+                className="self-end mb-0.5 px-2 py-1.5 text-xs rounded-lg bg-white/10 hover:bg-white/20 text-white/60 hover:text-white disabled:opacity-30 transition-all shrink-0">
+                <PlusIcon className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            {/* Linked event requirements */}
+            {dependencyEventIds.length > 0 && (
+              <div className="flex flex-col gap-1 mb-1">
+                {dependencyEventIds.map((eid) => {
+                  const ev = events.find(e => e.event_id === eid);
+                  return (
+                    <div key={eid} className="flex items-center gap-2 px-2 py-1 rounded-lg bg-purple-500/10 border border-purple-500/20 text-xs">
+                      <span className="text-purple-300">📅</span>
+                      <span className="flex-1 text-white/70 truncate">{ev?.title ?? eid}</span>
+                      <span className="text-white/30 shrink-0">{ev ? new Date(ev.start_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" }) : ""}</span>
+                      <button type="button" onClick={() => setDependencyEventIds(dependencyEventIds.filter(id => id !== eid))}
+                        className="text-white/30 hover:text-red-400 transition-colors shrink-0">
+                        <XMarkIcon className="h-3 w-3" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Task requirements */}
+            {otherTasks.length > 0 && (
+              <div className="flex flex-col gap-1 max-h-28 overflow-y-auto border border-white/5 rounded-lg p-2">
+                {otherTasks.map((t) => {
+                  const checked = dependencies.includes(t.task_id);
+                  return (
+                    <label key={t.task_id} className="flex items-center gap-2 cursor-pointer py-0.5">
+                      <input type="checkbox" checked={checked}
+                        onChange={() => setDependencies(checked ? dependencies.filter((d) => d !== t.task_id) : [...dependencies, t.task_id])}
+                        className="accent-blue-500" />
+                      <span className="text-xs text-white/60 truncate flex-1">{t.title}</span>
+                      <span className={`text-[10px] shrink-0 ${STATUS_COLORS[t.status]}`}>{STATUS_LABELS[t.status]}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </div>
-
-          {/* Dynamic-only: duration, priority, mask, dependencies */}
-          {type === "dynamic" && (
-            <>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-xs text-white/40 mb-1">Durée (min)</label>
-                  <input type="number" min="5" step="5" value={durationMinutes} onChange={(e) => setDurationMinutes(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none" />
-                </div>
-                <div>
-                  <label className="block text-xs text-white/40 mb-1">Priorité (0-10)</label>
-                  <input type="number" min="0" max="10" value={priority} onChange={(e) => setPriority(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none" />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs text-white/40 mb-1">Plage horaire (mask)</label>
-                <select value={maskId} onChange={(e) => setMaskId(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none appearance-none">
-                  <option value="" style={{ background: "#171717" }}>— aucun (libre) —</option>
-                  {masks.map((m) => (
-                    <option key={m.mask_id} value={m.mask_id} style={{ background: "#171717" }}>{m.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs text-white/40 mb-1">Dépendances (tâches à finir avant)</label>
-                <div className="flex flex-col gap-1 max-h-36 overflow-y-auto border border-white/5 rounded-lg p-2">
-                  {otherTasks.length === 0 ? (
-                    <span className="text-xs text-white/20 italic">Aucune autre tâche disponible</span>
-                  ) : otherTasks.map((t) => {
-                    const checked = dependencies.includes(t.task_id);
-                    return (
-                      <label key={t.task_id} className="flex items-center gap-2 cursor-pointer py-0.5">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => setDependencies(checked ? dependencies.filter((d) => d !== t.task_id) : [...dependencies, t.task_id])}
-                          className="accent-blue-500"
-                        />
-                        <span className="text-xs text-white/60 truncate flex-1">{t.title}</span>
-                        <span className={`text-[10px] shrink-0 ${STATUS_COLORS[t.status]}`}>{STATUS_LABELS[t.status]}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            </>
-          )}
 
           {/* Location */}
           <div className="flex items-start gap-0">
-            <LocationInput
-              value={location}
-              onChange={(v) => {
-                setLocation(v);
-                setLocationLat(null);
-                setLocationLon(null);
-              }}
-              onSelect={(r) => {
-                setLocationLat(r.lat);
-                setLocationLon(r.lon);
-              }}
-            />
+            <LocationInput value={location}
+              onChange={(v) => { setLocation(v); setLocationLat(null); setLocationLon(null); }}
+              onSelect={(r) => { setLocationLat(r.lat); setLocationLon(r.lon); }} />
           </div>
 
           {/* Notes */}
@@ -1366,15 +1512,14 @@ function TaskFormModal({ initial, tasks, masks, calendars, onSave, onDelete, onC
 
           <div className="flex items-center justify-between pt-1">
             {onDelete ? (
-              <button type="button" onClick={() => { void onDelete?.().then(onClose); }} disabled={saving} className="text-xs text-red-400 hover:text-red-300 transition-colors">
-                Supprimer
-              </button>
+              <button type="button" onClick={() => { void onDelete?.().then(onClose); }} disabled={saving}
+                className="text-xs text-red-400 hover:text-red-300 transition-colors">Supprimer</button>
             ) : <span />}
             <div className="flex gap-2">
-              <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition-all">
-                Annuler
-              </button>
-              <button type="submit" disabled={saving} className="px-3 py-1.5 text-xs rounded-lg bg-white hover:bg-white/90 text-neutral-900 font-medium transition-all disabled:opacity-50">
+              <button type="button" onClick={onClose}
+                className="px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition-all">Annuler</button>
+              <button type="submit" disabled={saving}
+                className="px-3 py-1.5 text-xs rounded-lg bg-white hover:bg-white/90 text-neutral-900 font-medium transition-all disabled:opacity-50">
                 {saving ? "…" : "Enregistrer"}
               </button>
             </div>
@@ -1913,7 +2058,11 @@ export default function CalendarPage() {
   function eventsOnDay(day: Date): CalendarEvent[] {
     const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate());
     const dayEnd = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59, 999);
+    const dayDateStr = `${day.getFullYear()}-${String(day.getMonth()+1).padStart(2,'0')}-${String(day.getDate()).padStart(2,'0')}`;
     return visibleEvents.filter((ev) => {
+      if (ev.all_day) {
+        return ev.start_at.slice(0, 10) <= dayDateStr && ev.end_at.slice(0, 10) >= dayDateStr;
+      }
       const s = new Date(ev.start_at);
       const e = new Date(ev.end_at);
       return s <= dayEnd && e >= dayStart;
@@ -2186,6 +2335,7 @@ export default function CalendarPage() {
             onClickEvent={handleClickEvent}
             ghosts={ghosts}
             tasks={tasks}
+            allEvents={events}
           />
         )}
       </div>
@@ -2219,6 +2369,7 @@ export default function CalendarPage() {
           tasks={tasks}
           masks={masks}
           calendars={calendars}
+          events={events}
           onSave={handleSaveTask}
           onDelete={editingTask ? handleDeleteTask : undefined}
           onClose={() => { setShowTaskForm(false); setEditingTask(null); }}
