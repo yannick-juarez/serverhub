@@ -133,10 +133,10 @@ export async function handleListTasks(_req: Request, res: Response): Promise<voi
 
 export async function handleCreateTask(req: Request, res: Response): Promise<void> {
   const body = req.body as Record<string, unknown>;
-  const { title, type } = body;
+  const { title } = body;
 
-  if (!title || !type) {
-    res.status(400).json({ success: false, error: 'Missing required fields: title, type' });
+  if (!title) {
+    res.status(400).json({ success: false, error: 'Missing required field: title' });
     return;
   }
 
@@ -147,7 +147,7 @@ export async function handleCreateTask(req: Request, res: Response): Promise<voi
     location: (body.location as string) ?? null,
     location_lat: (body.location_lat as number) ?? null,
     location_lon: (body.location_lon as number) ?? null,
-    type: (body.type as 'fixed' | 'dynamic') ?? 'fixed',
+    type: 'dynamic',
     status: (body.status as 'todo' | 'in_progress' | 'done' | 'failed') ?? 'todo',
     start_at: (body.start_at as string) ?? null,
     end_at: (body.end_at as string) ?? null,
