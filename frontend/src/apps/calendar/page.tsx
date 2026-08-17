@@ -2232,11 +2232,18 @@ export default function CalendarPage() {
               Créer un calendrier
             </button>
           ) : (
-            <button onClick={() => openNewEvent(new Date())}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-white hover:bg-white/90 text-neutral-900 font-medium transition-all shrink-0">
-              <PlusIcon className="h-3.5 w-3.5" />
-              Nouvel événement
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={() => { setEditingTask(null); setShowTaskForm(true); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-white/10 hover:bg-white/20 text-white/70 hover:text-white font-medium transition-all">
+                <PlusIcon className="h-3.5 w-3.5" />
+                Nouvelle tâche
+              </button>
+              <button onClick={() => openNewEvent(new Date())}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-white hover:bg-white/90 text-neutral-900 font-medium transition-all">
+                <PlusIcon className="h-3.5 w-3.5" />
+                Nouvel événement
+              </button>
+            </div>
           )}
         </div>
 
