@@ -1707,7 +1707,10 @@ export default function CalendarPage() {
   useDocumentTitle("Calendar");
 
   const today = new Date();
-  const [view, setView] = useState<CalendarView>("month");
+  const [view, setView] = useState<CalendarView>(() => {
+    const saved = localStorage.getItem("calendar_view");
+    return (saved === "day" || saved === "week" || saved === "month") ? saved : "month";
+  });
   const [viewDate, setViewDate] = useState(new Date(today));
 
   const [calendars, setCalendars] = useState<Calendar[]>([]);
@@ -2063,7 +2066,7 @@ export default function CalendarPage() {
           {/* View switcher */}
           <div className="flex items-center border border-white/10 rounded-lg overflow-hidden text-xs shrink-0">
             {(["day", "week", "month"] as CalendarView[]).map((v) => (
-              <button key={v} onClick={() => setView(v)}
+              <button key={v} onClick={() => { setView(v); localStorage.setItem("calendar_view", v); }}
                 className={`px-3 py-1.5 transition-colors border-r border-white/10 last:border-r-0 ${
                   view === v ? "bg-white/10 text-white" : "text-white/40 hover:text-white/70 hover:bg-white/5"
                 }`}>
