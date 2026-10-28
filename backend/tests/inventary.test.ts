@@ -73,6 +73,7 @@ function input(name: string, overrides: Partial<EntryInput> = {}): EntryInput {
   return {
     name, kind: 'container', parentId: null, label: '', description: '',
     containerType: overrides.kind && overrides.kind !== 'container' ? null : 'folder',
+    itemType: overrides.kind === 'document' ? 'document' : overrides.kind === 'item' ? 'object' : null,
     quantity: 0, unit: 'unité', minQuantity: 0, sku: '', barcode: '', ...overrides,
   };
 }
@@ -232,6 +233,64 @@ test('migrates existing entries to folder types without losing data and can reop
   assert.equal(migrated?.parentId, box.id);
   assert.equal(migrated?.quantity, 7);
   assert.equal(migrated?.sku, 'LEGACY-1');
+  closeDb();
+  assert.deepEqual(await request<InventoryEntry[]>('Alice', entriesPath(home.id)), records);
+});
+
+test('persists item types, preserves stock on edits and rejects mismatched types', async () => {
+  const shop = await context();
+  for (const itemType of ['object', 'product', 'document', 'clothing', 'book', 'equipment'] as const) {
+    const record = await entry(shop.id, input(itemType, {
+      kind: itemType === 'document' ? 'document' : 'item', itemType, quantity: 3,
+    }));
+    assert.equal(record.itemType, itemType);
+    assert.equal(record.containerType, null);
+  }
+  const clothing = await entry(shop.id, input('Typed item', {
+    kind: 'item', itemType: 'clothing', quantity: 7, minQuantity: 2, sku: 'TYPE-1', barcode: '000123',
+  }));
+  const changed = await request<InventoryEntry>('Alice', `${entriesPath(shop.id)}/${clothing.id}`, 'PUT', {
+    ...clothing, itemType: 'equipment',
+  });
+  assert.equal(changed.itemType, 'equipment');
+  assert.equal(changed.quantity, 7);
+  assert.equal(changed.minQuantity, 2);
+  assert.equal(changed.sku, 'TYPE-1');
+  assert.equal(changed.barcode, '000123');
+  const stock = await request<InventoryEntry>('Alice', `${entriesPath(shop.id)}/${clothing.id}/stock`, 'POST', { delta: 1 });
+  assert.equal(stock.itemType, 'equipment');
+  closeDb();
+  const records = await request<InventoryEntry[]>('Alice', entriesPath(shop.id));
+  assert.equal(records.find((record) => record.id === clothing.id)?.itemType, 'equipment');
+  assert.equal(records.find((record) => record.id === clothing.id)?.quantity, 8);
+  for (const itemType of ['unknown', 123, {}, '']) {
+    await request('Alice', entriesPath(shop.id), 'POST', { ...input('Invalid', { kind: 'item' }), itemType }, 400, 'Invalid item type.');
+    await request('Alice', `${entriesPath(shop.id)}/${clothing.id}`, 'PUT', { ...changed, itemType }, 400, 'Invalid item type.');
+  }
+  await request('Alice', entriesPath(shop.id), 'POST', input('Container mismatch', { itemType: 'clothing' }), 400);
+  await request('Alice', entriesPath(shop.id), 'POST', input('Document mismatch', { kind: 'document', itemType: 'clothing' }), 400);
+  await request('Alice', entriesPath(shop.id), 'POST', input('Item mismatch', { kind: 'item', itemType: 'document' }), 400);
+  const legacy: Partial<EntryInput> = input('Legacy object', { kind: 'item' });
+  delete legacy.itemType;
+  assert.equal((await request<InventoryEntry>('Alice', entriesPath(shop.id), 'POST', legacy, 201)).itemType, 'object');
+  const legacyDocument: Partial<EntryInput> = input('Legacy document', { kind: 'document' });
+  delete legacyDocument.itemType;
+  assert.equal((await request<InventoryEntry>('Alice', entriesPath(shop.id), 'POST', legacyDocument, 201)).itemType, 'document');
+});
+
+test('migrates existing objects and documents without changing data or container types', async () => {
+  const home = await context();
+  const box = await entry(home.id, input('Box', { containerType: 'box' }));
+  const object = await entry(home.id, input('Existing object', { kind: 'item', parentId: box.id, quantity: 5, sku: 'MIGRATION-ITEM' }));
+  const document = await entry(home.id, input('Existing document', { kind: 'document', parentId: box.id }));
+  const { getDb } = await import('../src/modules/storage/db');
+  getDb().exec('ALTER TABLE inventory_entries DROP COLUMN itemType');
+  closeDb();
+  const records = await request<InventoryEntry[]>('Alice', entriesPath(home.id));
+  assert.equal(records.find((record) => record.id === box.id)?.itemType, null);
+  assert.equal(records.find((record) => record.id === box.id)?.containerType, 'box');
+  assert.deepEqual(records.find((record) => record.id === object.id), object);
+  assert.deepEqual(records.find((record) => record.id === document.id), document);
   closeDb();
   assert.deepEqual(await request<InventoryEntry[]>('Alice', entriesPath(home.id)), records);
 });

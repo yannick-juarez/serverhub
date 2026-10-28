@@ -45,6 +45,17 @@ function entryInput(body: unknown): EntryInput {
   if (kind !== 'container' && containerType !== null) {
     throw new inventory.InventoryError('Container types are only available for containers.');
   }
+  const itemType = value.itemType ?? (kind === 'container' ? null : kind === 'document' ? 'document' : 'object');
+  if (itemType !== null && itemType !== 'object' && itemType !== 'product' && itemType !== 'document'
+    && itemType !== 'clothing' && itemType !== 'book' && itemType !== 'equipment') {
+    throw new inventory.InventoryError('Invalid item type.');
+  }
+  if (kind === 'container' && itemType !== null) {
+    throw new inventory.InventoryError('Item types are only available for items and documents.');
+  }
+  if ((kind === 'document' && itemType !== 'document') || (kind === 'item' && itemType === 'document')) {
+    throw new inventory.InventoryError('Document type requires the document entry kind.');
+  }
   const parentId = value.parentId === null ? null : text(value.parentId, 'Parent', 100, true);
   const quantity = amount(value.quantity, 'Quantity');
   const minQuantity = amount(value.minQuantity, 'Low-stock threshold');
@@ -54,7 +65,7 @@ function entryInput(body: unknown): EntryInput {
     throw new inventory.InventoryError('Stock fields are only available for items and documents.');
   }
   return {
-    parentId, kind, containerType, name: text(value.name, 'Name', 200, true),
+    parentId, kind, containerType, itemType, name: text(value.name, 'Name', 200, true),
     label: text(value.label, 'Category', 100), description: text(value.description, 'Description', 5000),
     quantity, minQuantity, unit: text(value.unit, 'Unit', 40, true), sku, barcode,
   };

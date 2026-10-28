@@ -6,6 +6,7 @@ import type { ContextInput, EntryInput, InventoryContext, InventoryEntry } from 
 import { kindLabels, selectClass, usageLabels } from './labels';
 import { containerTypes } from './containerTypes';
 import EntryIcon from './EntryIcon';
+import { itemTypes } from './itemTypes';
 
 export function Modal({ title, children, onClose, busy, error }: {
   title: string; children: ReactNode; onClose: () => void; busy: boolean; error: string;
@@ -87,6 +88,7 @@ export function EntryEditor({ entry, parentId, initialKind, entries, path, busy,
   const [form, setForm] = useState<EntryInput>(entry ?? {
     parentId, kind: initialKind, name: '', label: '', description: '', quantity: initialKind === 'container' ? 0 : 1,
     minQuantity: 0, unit: 'unit', sku: '', barcode: '', containerType: initialKind === 'container' ? 'folder' : null,
+    itemType: initialKind === 'container' ? null : initialKind === 'document' ? 'document' : 'object',
   });
   const excluded = new Set<string>();
   if (entry) {
@@ -105,6 +107,7 @@ export function EntryEditor({ entry, parentId, initialKind, entries, path, busy,
     onSave({
       parentId: form.parentId, kind: form.kind, name: form.name.trim(), label: form.label.trim(),
       containerType: form.kind === 'container' ? form.containerType ?? 'folder' : null,
+      itemType: form.kind === 'container' ? null : form.kind === 'document' ? 'document' : form.itemType ?? 'object',
       description: form.description.trim(), quantity: form.kind === 'container' ? 0 : form.quantity,
       minQuantity: form.kind === 'container' ? 0 : form.minQuantity, unit: form.unit.trim(),
       sku: form.kind === 'container' ? '' : form.sku.trim(), barcode: form.kind === 'container' ? '' : form.barcode.trim(),
@@ -119,7 +122,11 @@ export function EntryEditor({ entry, parentId, initialKind, entries, path, busy,
               <select className={selectClass} value={form.kind} disabled={Boolean(hasChildren)} onChange={(event) => {
                 const kind = event.target.value;
                 if (kind === 'container' || kind === 'item' || kind === 'document') {
-                  setForm({ ...form, kind, containerType: kind === 'container' ? form.containerType ?? 'folder' : null });
+                  setForm({
+                    ...form, kind, containerType: kind === 'container' ? form.containerType ?? 'folder' : null,
+                    itemType: kind === 'container' ? null : kind === 'document' ? 'document'
+                      : form.itemType && form.itemType !== 'document' ? form.itemType : 'object',
+                  });
                 }
               }}>
                 {Object.entries(kindLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -140,6 +147,25 @@ export function EntryEditor({ entry, parentId, initialKind, entries, path, busy,
                       className="accent-emerald-500" onChange={() => {
                         if (value === 'folder' || value === 'box' || value === 'home' || value === 'building' || value === 'room' || value === 'shelf') {
                           setForm({ ...form, containerType: value });
+                        }
+                      }} />
+                    <definition.icon aria-hidden="true" className="h-4 w-4 shrink-0" />
+                    {definition.label}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
+          {form.kind !== 'container' && (
+            <fieldset className="space-y-2">
+              <legend className="mb-2 text-xs text-slate-300">Item type</legend>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {Object.entries(itemTypes).map(([value, definition]) => (
+                  <label key={value} className={`flex cursor-pointer items-center gap-2 rounded-lg border p-3 text-xs ${form.itemType === value ? 'border-emerald-300/50 bg-emerald-500/10 text-emerald-200' : 'border-white/10 text-slate-300 hover:bg-white/5'}`}>
+                    <input type="radio" name="itemType" value={value} checked={form.itemType === value}
+                      className="accent-emerald-500" onChange={() => {
+                        if (value === 'object' || value === 'product' || value === 'document' || value === 'clothing' || value === 'book' || value === 'equipment') {
+                          setForm({ ...form, itemType: value, kind: value === 'document' ? 'document' : 'item' });
                         }
                       }} />
                     <definition.icon aria-hidden="true" className="h-4 w-4 shrink-0" />

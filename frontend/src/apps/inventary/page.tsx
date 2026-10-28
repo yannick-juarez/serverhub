@@ -16,6 +16,7 @@ import { kindLabels, selectClass, usageLabels } from './labels';
 import { useAppHeader } from '../../components/Header/appHeader';
 import EntryIcon from './EntryIcon';
 import { containerTypes } from './containerTypes';
+import { itemTypes } from './itemTypes';
 
 type Editor = { type: 'context'; context?: InventoryContext }
   | { type: 'entry'; entry?: InventoryEntry; kind: EntryKind };
@@ -204,7 +205,7 @@ export default function InventaryPage() {
   const normalizedQuery = query.trim().toLocaleLowerCase('en');
   const visible = entries.filter((entry) =>
     (searching || entry.parentId === parentId)
-    && (!kind || entry.kind === kind)
+    && (!kind || entry.kind === kind || (kind.startsWith('item:') && entry.itemType === kind.slice(5)))
     && (!lowOnly || isLow(entry))
     && (!normalizedQuery || [entry.name, entry.label, entry.description, entry.sku, entry.barcode, path(entry.parentId)]
       .some((value) => value.toLocaleLowerCase('en').includes(normalizedQuery))))
@@ -330,6 +331,10 @@ export default function InventaryPage() {
                     <select aria-label="Filter by type" className={`${selectClass} !w-auto`} value={kind} onChange={(event) => setKind(event.target.value)}>
                       <option value="">All types</option>
                       {Object.entries(kindLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                      <optgroup label="Item types">
+                        {Object.entries(itemTypes).filter(([value]) => value !== 'document')
+                          .map(([value, definition]) => <option key={value} value={`item:${value}`}>{definition.label}</option>)}
+                      </optgroup>
                     </select>
                     <Button variant="secondary" aria-pressed={lowOnly} onClick={() => setLowOnly(!lowOnly)}
                       className={lowOnly ? 'border-amber-300/40 text-amber-200' : ''}>Low stock ({lowCount})</Button>
@@ -346,7 +351,7 @@ export default function InventaryPage() {
                             <button onClick={() => entry.kind === 'container' ? navigate(entry.id) : setSelectedId(entry.id)} className="flex items-center gap-3 text-left">
                               <span className="rounded-lg border border-white/10 bg-white/5 p-2"><EntryIcon entry={entry} className={`h-5 w-5 ${entry.kind === 'container' ? 'text-emerald-300' : 'text-slate-300'}`} /></span>
                               <span><span className="block break-words text-sm font-medium text-slate-100">{entry.name}</span>
-                                <span className="mt-1 block text-[11px] text-slate-500">{entry.label || (entry.kind === 'container' ? containerTypes[entry.containerType ?? 'folder'].label : kindLabels[entry.kind])}{searching ? ` · ${path(entry.parentId)}` : ''}</span></span>
+                                <span className="mt-1 block text-[11px] text-slate-500">{entry.label || (entry.kind === 'container' ? containerTypes[entry.containerType ?? 'folder'].label : itemTypes[entry.itemType ?? (entry.kind === 'document' ? 'document' : 'object')].label)}{searching ? ` · ${path(entry.parentId)}` : ''}</span></span>
                             </button>
                           </td>
                           <td className="p-4 font-mono text-[11px] text-slate-400">
@@ -376,12 +381,15 @@ export default function InventaryPage() {
                 </div>
                 {selected && selected.kind !== 'container' && <section aria-label={`Record: ${selected.name}`} className="mt-5 rounded-xl border border-emerald-300/20 bg-emerald-500/[0.03] p-5">
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0"><h3 className="break-words text-lg font-semibold">{selected.name}</h3><p className="mt-1 text-xs text-slate-400">{path(selected.parentId)}</p></div>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <EntryIcon entry={selected} className="h-6 w-6 shrink-0 text-emerald-300" />
+                      <div className="min-w-0"><h3 className="break-words text-lg font-semibold">{selected.name}</h3><p className="mt-1 text-xs text-slate-400">{path(selected.parentId)}</p></div>
+                    </div>
                     <Button variant="secondary" aria-label="Close record" onClick={() => setSelectedId(null)}><HiOutlineXMark className="h-4 w-4" /></Button>
                   </div>
                   {selected.description && <p className="mt-4 whitespace-pre-wrap break-words text-sm text-slate-300">{selected.description}</p>}
                   <dl className="my-5 grid grid-cols-2 gap-4 text-xs sm:grid-cols-4">
-                    <div><dt className="text-slate-500">Category</dt><dd className="mt-1 break-words">{selected.label || kindLabels[selected.kind]}</dd></div>
+                    <div><dt className="text-slate-500">Item type / category</dt><dd className="mt-1 break-words">{itemTypes[selected.itemType ?? (selected.kind === 'document' ? 'document' : 'object')].label}{selected.label ? ` · ${selected.label}` : ''}</dd></div>
                     <div><dt className="text-slate-500">SKU</dt><dd className="mt-1 break-all font-mono">{selected.sku || 'Not specified'}</dd></div>
                     <div><dt className="text-slate-500">Barcode</dt><dd className="mt-1 break-all font-mono">{selected.barcode || 'Not specified'}</dd></div>
                     <div><dt className="text-slate-500">Low-stock threshold</dt><dd className="mt-1">{number(selected.minQuantity)} {selected.unit}</dd></div>
