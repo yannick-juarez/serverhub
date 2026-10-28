@@ -2,7 +2,9 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
+  ChevronDownIcon,
   PlusIcon,
+  MinusIcon,
   XMarkIcon,
   CalendarDaysIcon,
   MapPinIcon,
@@ -16,6 +18,9 @@ import {
   ExclamationCircleIcon,
   ArrowPathIcon,
   ListBulletIcon,
+  MagnifyingGlassIcon,
+  CheckIcon,
+  DocumentDuplicateIcon,
 } from "@heroicons/react/24/outline";
 import { CheckCircleIcon as CheckCircleSolidIcon } from "@heroicons/react/24/solid";
 import useDocumentTitle from "../../hooks/useDocumentTitle";
@@ -34,6 +39,7 @@ import {
   deleteTask,
   fetchMasks,
   createMask,
+  updateMask,
   deleteMask,
   fetchGhostPlacements,
   geocodeLocation,
@@ -43,6 +49,7 @@ import {
   type TaskStatus,
   type Mask,
   type MaskSlot,
+  type MaskDateRange,
   type GhostPlacement,
   type GeocodeResult,
 } from "../../api/calendar";
@@ -111,6 +118,85 @@ function formatDateDisplay(isoStr: string): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
+function zonedDateTimeToIso(date: string, time: string, timeZone: string): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const targetWallTime = Date.UTC(year, month - 1, day, hour, minute);
+  let instant = targetWallTime;
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+
+  for (let iteration = 0; iteration < 2; iteration += 1) {
+    const parts = Object.fromEntries(
+      formatter.formatToParts(new Date(instant))
+        .filter((part) => part.type !== "literal")
+        .map((part) => [part.type, Number(part.value)]),
+    );
+    const representedWallTime = Date.UTC(
+      parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second,
+    );
+    instant += targetWallTime - representedWallTime;
+  }
+  return new Date(instant).toISOString();
+}
+
+function timeInTimeZone(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("fr-FR", {
+    timeZone,
+    hourCycle: "h23",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(iso)).replace(" h ", ":");
+}
+
+function expandRecurringEvents(events: CalendarEvent[], rangeStart: Date, rangeEnd: Date): CalendarEvent[] {
+  const visibleStart = toLocalDateStr(rangeStart);
+  const visibleEnd = toLocalDateStr(rangeEnd);
+
+  return events.flatMap((event) => {
+    if (event.recurrence_days.length === 0 || !event.recurrence_start || !event.recurrence_end) return [event];
+
+    const startDate = event.recurrence_start > visibleStart ? event.recurrence_start : visibleStart;
+    const endDate = event.recurrence_end < visibleEnd ? event.recurrence_end : visibleEnd;
+    if (startDate > endDate) return [];
+
+    const timeZone = event.recurrence_timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    const durationMs = new Date(event.end_at).getTime() - new Date(event.start_at).getTime();
+    const recurrenceTime = event.all_day ? "00:00" : timeInTimeZone(event.start_at, timeZone);
+    const cursor = new Date(`${startDate}T00:00:00Z`);
+    const occurrences: CalendarEvent[] = [];
+
+    while (cursor.toISOString().slice(0, 10) <= endDate) {
+      const date = cursor.toISOString().slice(0, 10);
+      if (event.recurrence_days.includes(cursor.getUTCDay())) {
+        const occurrenceStart = event.all_day
+          ? `${date}T00:00:00.000Z`
+          : zonedDateTimeToIso(date, recurrenceTime, timeZone);
+        const occurrenceEnd = event.all_day
+          ? `${date}T23:59:59.000Z`
+          : new Date(new Date(occurrenceStart).getTime() + durationMs).toISOString();
+        occurrences.push({
+          ...event,
+          start_at: occurrenceStart,
+          end_at: occurrenceEnd,
+          occurrence_id: `${event.event_id}-${date}`,
+        });
+      }
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+
+    return occurrences;
+  });
+}
+
 type CalendarView = "day" | "week" | "month";
 
 const DAY_NAMES = ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
@@ -140,6 +226,48 @@ function durationPx(startIso: string, endIso: string): number {
   return mins / 60 * PX_PER_HOUR;
 }
 
+function assignTimeColumns<T extends { start: string; end: string }>(items: T[]): Array<T & { column: number; columnCount: number }> {
+  const minimumDurationMs = 20 / PX_PER_HOUR * 60 * 60 * 1000;
+  const visualEnd = (item: T) => Math.max(
+    new Date(item.end).getTime(),
+    new Date(item.start).getTime() + minimumDurationMs,
+  );
+  const sorted = [...items].sort((left, right) => {
+    const startDelta = new Date(left.start).getTime() - new Date(right.start).getTime();
+    return startDelta || visualEnd(left) - visualEnd(right);
+  });
+  const result: Array<T & { column: number; columnCount: number }> = [];
+  let group: T[] = [];
+  let groupEnd = Number.NEGATIVE_INFINITY;
+
+  function flushGroup() {
+    if (group.length === 0) return;
+    const columnEnds: number[] = [];
+    const placements = group.map((item) => {
+      const start = new Date(item.start).getTime();
+      const end = visualEnd(item);
+      let column = columnEnds.findIndex((columnEnd) => columnEnd <= start);
+      if (column === -1) column = columnEnds.length;
+      columnEnds[column] = end;
+      return { item, column };
+    });
+    const columnCount = columnEnds.length;
+    result.push(...placements.map(({ item, column }) => ({ ...item, column, columnCount })));
+    group = [];
+    groupEnd = Number.NEGATIVE_INFINITY;
+  }
+
+  for (const item of sorted) {
+    const start = new Date(item.start).getTime();
+    const end = visualEnd(item);
+    if (group.length > 0 && start >= groupEnd) flushGroup();
+    group.push(item);
+    groupEnd = Math.max(groupEnd, end);
+  }
+  flushGroup();
+  return result;
+}
+
 function formatViewTitle(view: CalendarView, viewDate: Date): string {
   if (view === "day") {
     return `${DAY_NAMES[viewDate.getDay()]} ${viewDate.getDate()} ${MONTHS[viewDate.getMonth()]} ${viewDate.getFullYear()}`;
@@ -167,6 +295,31 @@ const PRESET_COLORS = [
   "#6366f1", "#64748b",
 ];
 
+function ColorOverridePicker({ value, defaultColor, onChange }: {
+  value: string | null;
+  defaultColor: string;
+  onChange: (color: string | null) => void;
+}) {
+  return (
+    <div>
+      <span className="mb-1.5 block text-xs text-white/40">Couleur</span>
+      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Couleur">
+        <button type="button" title="Couleur du calendrier" aria-label="Couleur du calendrier" aria-pressed={value === null}
+          onClick={() => onChange(null)} style={{ backgroundColor: defaultColor }}
+          className={`flex h-6 w-6 items-center justify-center rounded border ${value === null ? "border-white ring-1 ring-white/50" : "border-white/20"}`}>
+          {value === null && <CheckIcon className="h-3.5 w-3.5 text-white drop-shadow" />}
+        </button>
+        <span className="h-4 w-px bg-white/10" />
+        {PRESET_COLORS.map((color) => (
+          <button key={color} type="button" title={color} aria-label={`Couleur ${color}`} aria-pressed={value === color}
+            onClick={() => onChange(color)} style={{ backgroundColor: color }}
+            className={`h-6 w-6 rounded border ${value === color ? "border-white ring-1 ring-white/50" : "border-white/20"}`} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Modal backdrop ───────────────────────────────────────────────────────────
 
 function Backdrop({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
@@ -190,22 +343,53 @@ type LocationInputProps = {
 };
 
 function LocationInput({ value, onChange, onSelect, placeholder = "Lieu (optionnel)" }: LocationInputProps) {
+  const [recentResults, setRecentResults] = useState<GeocodeResult[]>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem("calendar_recent_locations") ?? "[]") as unknown;
+      if (!Array.isArray(stored)) return [];
+      return stored.filter((item): item is GeocodeResult => {
+        if (!item || typeof item !== "object") return false;
+        const candidate = item as Partial<GeocodeResult>;
+        return typeof candidate.display_name === "string" && typeof candidate.lat === "number" && typeof candidate.lon === "number";
+      }).slice(0, 5);
+    } catch {
+      return [];
+    }
+  });
   const [results, setResults] = useState<GeocodeResult[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const normalizedQuery = value.trim().toLocaleLowerCase("fr-FR");
+  const matchingRecent = recentResults.filter((result) =>
+    !normalizedQuery || result.display_name.toLocaleLowerCase("fr-FR").includes(normalizedQuery),
+  );
+  const recentNames = new Set(matchingRecent.map((result) => result.display_name));
+  const suggestions = [
+    ...matchingRecent,
+    ...results.filter((result) => !recentNames.has(result.display_name)),
+  ];
 
   function handleChange(v: string) {
     onChange(v);
     if (timerRef.current) clearTimeout(timerRef.current);
-    if (!v.trim() || v.trim().length < 3) { setResults([]); setOpen(false); return; }
+    if (!v.trim() || v.trim().length < 3) {
+      setResults([]);
+      const normalizedValue = v.trim().toLocaleLowerCase("fr-FR");
+      setOpen(recentResults.some((result) => !normalizedValue || result.display_name.toLocaleLowerCase("fr-FR").includes(normalizedValue)));
+      return;
+    }
     timerRef.current = setTimeout(async () => {
       setLoading(true);
       try {
         const res = await geocodeLocation(v.trim());
         setResults(res);
-        setOpen(res.length > 0);
+        const normalizedValue = v.trim().toLocaleLowerCase("fr-FR");
+        const hasRecentMatch = recentResults.some((result) =>
+          result.display_name.toLocaleLowerCase("fr-FR").includes(normalizedValue),
+        );
+        setOpen(res.length > 0 || hasRecentMatch);
       } finally {
         setLoading(false);
       }
@@ -213,6 +397,9 @@ function LocationInput({ value, onChange, onSelect, placeholder = "Lieu (optionn
   }
 
   function handleSelect(r: GeocodeResult) {
+    const nextRecent = [r, ...recentResults.filter((result) => result.display_name !== r.display_name)].slice(0, 5);
+    setRecentResults(nextRecent);
+    localStorage.setItem("calendar_recent_locations", JSON.stringify(nextRecent));
     onChange(r.display_name);
     onSelect(r);
     setOpen(false);
@@ -234,26 +421,32 @@ function LocationInput({ value, onChange, onSelect, placeholder = "Lieu (optionn
         <input
           value={value}
           onChange={(e) => handleChange(e.target.value)}
-          onFocus={() => results.length > 0 && setOpen(true)}
+          onFocus={() => suggestions.length > 0 && setOpen(true)}
           className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/30"
           placeholder={placeholder}
           autoComplete="off"
         />
         {loading && <span className="text-[10px] text-white/30 shrink-0">…</span>}
       </div>
-      {open && results.length > 0 && (
+      {open && suggestions.length > 0 && (
         <div className="absolute left-7 right-0 top-full mt-1 z-50 bg-neutral-900 border border-white/10 rounded-lg shadow-xl overflow-hidden">
-          {results.map((r, i) => (
+          {suggestions.map((r) => {
+            const isRecent = recentResults.some((recent) => recent.display_name === r.display_name);
+            return (
             <button
-              key={i}
+              key={`${r.display_name}-${r.lat}-${r.lon}`}
               type="button"
               onClick={() => handleSelect(r)}
-              className="w-full text-left px-3 py-2 text-xs text-white/70 hover:bg-white/5 hover:text-white transition-colors border-b border-white/5 last:border-0"
+              className="flex w-full items-center gap-2 border-b border-white/5 px-3 py-2 text-left text-xs text-white/70 transition-colors last:border-0 hover:bg-white/5 hover:text-white"
             >
-              <span className="block truncate">{r.display_name}</span>
-              <span className="text-[10px] text-white/30">{r.lat.toFixed(4)}, {r.lon.toFixed(4)}</span>
+              {isRecent && <ClockIcon className="h-3.5 w-3.5 shrink-0 text-white/30" />}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{r.display_name}</span>
+                <span className="text-[10px] text-white/30">{r.lat.toFixed(4)}, {r.lon.toFixed(4)}</span>
+              </span>
             </button>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -400,14 +593,20 @@ type EventFormProps = {
   defaultCalendarId?: string;
   onSave: (data: {
     calendar_id: string;
+    color: string | null;
     title: string;
     description: string;
     location: string;
     location_lat: number | null;
     location_lon: number | null;
     all_day: boolean;
+    allows_overlap: boolean;
     start_at: string;
     end_at: string;
+    recurrence_days: number[];
+    recurrence_start: string | null;
+    recurrence_end: string | null;
+    recurrence_timezone: string | null;
   }) => Promise<void>;
   onDelete?: () => Promise<void>;
   onClose: () => void;
@@ -431,12 +630,14 @@ function EventFormModal({
   const [calendarId, setCalendarId] = useState(
     initial?.calendar_id ?? defaultCalendarId ?? calendars[0]?.calendar_id ?? ""
   );
+  const [eventColor, setEventColor] = useState<string | null>(initial?.color ?? null);
   const [allDay, setAllDay] = useState(initial?.all_day ?? false);
+  const [allowsOverlap, setAllowsOverlap] = useState(initial?.allows_overlap ?? false);
   const [startAt, setStartAt] = useState(
-    initial ? (initial.all_day ? startOfDay(initial.start_at) : initial.start_at.slice(0, 16)) : (allDay ? baseDate : defaultStart)
+    initial ? (initial.all_day ? startOfDay(initial.start_at) : toLocalDatetimeStr(new Date(initial.start_at))) : (allDay ? baseDate : defaultStart)
   );
   const [endAt, setEndAt] = useState(
-    initial ? (initial.all_day ? startOfDay(initial.end_at) : initial.end_at.slice(0, 16)) : (allDay ? baseDate : defaultEnd)
+    initial ? (initial.all_day ? startOfDay(initial.end_at) : toLocalDatetimeStr(new Date(initial.end_at))) : (allDay ? baseDate : defaultEnd)
   );
   // Duration mode: when true, show a duration input that drives endAt
   const [durationMode, setDurationMode] = useState(false);
@@ -450,6 +651,13 @@ function EventFormModal({
   const [locationLat, setLocationLat] = useState<number | null>(initial?.location_lat ?? null);
   const [locationLon, setLocationLon] = useState<number | null>(initial?.location_lon ?? null);
   const [description, setDescription] = useState(initial?.description ?? "");
+  const defaultRecurrenceEnd = new Date(base);
+  defaultRecurrenceEnd.setDate(defaultRecurrenceEnd.getDate() + 28);
+  const [recurrenceEnabled, setRecurrenceEnabled] = useState((initial?.recurrence_days.length ?? 0) > 0);
+  const [recurrenceDays, setRecurrenceDays] = useState<number[]>(initial?.recurrence_days ?? []);
+  const [recurrenceStart, setRecurrenceStart] = useState(initial?.recurrence_start ?? baseDate);
+  const [recurrenceEnd, setRecurrenceEnd] = useState(initial?.recurrence_end ?? toLocalDateStr(defaultRecurrenceEnd));
+  const recurrenceTimezone = initial?.recurrence_timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -510,13 +718,31 @@ function EventFormModal({
     e.preventDefault();
     if (!title.trim()) { setError("Un titre est requis."); return; }
     if (!calendarId) { setError("Sélectionnez un calendrier."); return; }
+    if (recurrenceEnabled && recurrenceDays.length === 0) { setError("Sélectionnez au moins un jour de récurrence."); return; }
+    if (recurrenceEnabled && recurrenceEnd < recurrenceStart) { setError("La fin de la récurrence doit suivre son début."); return; }
     setSaving(true);
     try {
       const effectiveEnd = durationMode && !allDay ? computedEndAt() : endAt;
       const start = allDay ? `${startAt.slice(0, 10)}T00:00:00.000Z` : new Date(startAt).toISOString();
       // For all-day: use same date as start, end at 23:59 local = store as local date sentinel
       const end = allDay ? `${startAt.slice(0, 10)}T23:59:59.000Z` : new Date(effectiveEnd).toISOString();
-      await onSave({ calendar_id: calendarId, title: title.trim(), description: description.trim(), location: location.trim(), location_lat: locationLat, location_lon: locationLon, all_day: allDay, start_at: start, end_at: end });
+      await onSave({
+        calendar_id: calendarId,
+        color: eventColor,
+        title: title.trim(),
+        description: description.trim(),
+        location: location.trim(),
+        location_lat: locationLat,
+        location_lon: locationLon,
+        all_day: allDay,
+        allows_overlap: allowsOverlap,
+        start_at: start,
+        end_at: end,
+        recurrence_days: recurrenceEnabled ? recurrenceDays : [],
+        recurrence_start: recurrenceEnabled ? recurrenceStart : null,
+        recurrence_end: recurrenceEnabled ? recurrenceEnd : null,
+        recurrence_timezone: recurrenceEnabled ? recurrenceTimezone : null,
+      });
       onClose();
     } catch {
       setError("Erreur lors de la sauvegarde.");
@@ -540,7 +766,7 @@ function EventFormModal({
 
   return (
     <Backdrop onClose={onClose}>
-      <div className="bg-black/30 backdrop-blur-sm border border-white/10 rounded-xl shadow-2xl w-full max-w-md p-5">
+      <div className="bg-black/30 backdrop-blur-sm border border-white/10 rounded-xl shadow-2xl w-full max-w-md p-5 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-white font-semibold text-sm">
             {initial ? "Modifier l'événement" : "Nouvel événement"}
@@ -576,6 +802,12 @@ function EventFormModal({
             </select>
           </div>
 
+          <ColorOverridePicker
+            value={eventColor}
+            defaultColor={calendars.find((calendar) => calendar.calendar_id === calendarId)?.color ?? "#64748b"}
+            onChange={setEventColor}
+          />
+
           {/* All day toggle */}
           <label className="flex items-center gap-2 cursor-pointer select-none">
             <div
@@ -585,6 +817,12 @@ function EventFormModal({
               <div className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform ${allDay ? "translate-x-4" : "translate-x-0.5"}`} />
             </div>
             <span className="text-xs text-white/60">Journée entière</span>
+          </label>
+
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" checked={allowsOverlap} onChange={(event) => setAllowsOverlap(event.target.checked)}
+              className="h-3.5 w-3.5 accent-white" />
+            <span className="text-xs text-white/60">Créneau non bloquant</span>
           </label>
 
           {/* Date/time + duration toggle */}
@@ -634,6 +872,48 @@ function EventFormModal({
                   onChange={(e) => handleEndChange(e.target.value)}
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-white/30 [color-scheme:dark]"
                 />
+              </div>
+            )}
+          </div>
+
+          <div className="border-t border-white/10 pt-3 space-y-3">
+            <label className="flex items-center gap-2 text-xs text-white/70 cursor-pointer">
+              <input type="checkbox" checked={recurrenceEnabled} onChange={(event) => setRecurrenceEnabled(event.target.checked)}
+                className="h-3.5 w-3.5 accent-white" />
+              Répéter cet événement
+            </label>
+            {recurrenceEnabled && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="grid grid-cols-7 gap-1" role="group" aria-label="Jours de récurrence">
+                    {RECURRENCE_DAYS.map(({ label, day }) => {
+                      const selected = recurrenceDays.includes(day);
+                      return (
+                        <button key={day} type="button" aria-label={DAY_NAMES[day]} aria-pressed={selected}
+                          onClick={() => setRecurrenceDays(selected ? recurrenceDays.filter((value) => value !== day) : [...recurrenceDays, day])}
+                          className={`h-7 w-7 rounded border text-xs transition-colors ${selected ? "bg-white/20 border-white/60 text-white" : "bg-white/5 border-white/10 text-white/40 hover:text-white/70"}`}>
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button type="button" onClick={() => setRecurrenceDays([1, 2, 3, 4, 5])}
+                    className="text-xs text-white/60 hover:text-white transition-colors">
+                    Semaine
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Du</label>
+                    <input type="date" required value={recurrenceStart} onChange={(event) => setRecurrenceStart(event.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none [color-scheme:dark]" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Au</label>
+                    <input type="date" required min={recurrenceStart} value={recurrenceEnd} onChange={(event) => setRecurrenceEnd(event.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none [color-scheme:dark]" />
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -832,7 +1112,7 @@ function EventDetail({ event, calendar, anchorRef, onEdit, onDelete, onClose }: 
         <div className="flex items-center gap-2 min-w-0">
           <span
             className="h-2.5 w-2.5 rounded-full shrink-0"
-            style={{ backgroundColor: calendar?.color ?? "#64748b" }}
+            style={{ backgroundColor: event.color ?? calendar?.color ?? "#64748b" }}
           />
           <span className="text-white font-medium text-sm truncate">{event.title}</span>
         </div>
@@ -880,6 +1160,12 @@ function EventDetail({ event, calendar, anchorRef, onEdit, onDelete, onClose }: 
             <span className="whitespace-pre-wrap">{event.description}</span>
           </div>
         )}
+        {event.allows_overlap && (
+          <div className="flex items-center gap-1.5 text-white/45">
+            <span className="h-2 w-2 rounded-full border border-dashed border-white/60" />
+            <span>Non bloquant</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -894,6 +1180,7 @@ type TimeGridProps = {
   today: Date;
   onClickSlot: (date: Date) => void;
   onClickEvent: (ev: CalendarEvent, anchor: HTMLElement) => void;
+  onEditEvent: (event: CalendarEvent) => void;
 };
 
 
@@ -902,10 +1189,12 @@ type TimeGridProps = {
 type TimeGridWithGhostsProps = TimeGridProps & {
   ghosts: GhostPlacement[];
   tasks: Task[];
+  completedTasks: Task[];
+  onClickTask: (task: Task) => void;
   allEvents: CalendarEvent[];
 };
 
-function TimeGridViewWithGhosts({ days, visibleEvents, calendarMap, today, onClickSlot, onClickEvent, ghosts, tasks, allEvents }: TimeGridWithGhostsProps) {
+function TimeGridViewWithGhosts({ days, visibleEvents, calendarMap, today, onClickSlot, onClickEvent, onEditEvent, ghosts, tasks, completedTasks, onClickTask, allEvents }: TimeGridWithGhostsProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const totalH = 24 * PX_PER_HOUR;
 
@@ -942,6 +1231,15 @@ function TimeGridViewWithGhosts({ days, visibleEvents, calendarMap, today, onCli
       const task = tasks.find((t) => t.task_id === g.task_id);
       if (!task) return [];
       return [{ ...g, task }];
+    });
+  }
+
+  function completedTasksForDay(day: Date): Task[] {
+    const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+    const dayEnd = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59, 999);
+    return completedTasks.filter((task) => {
+      if (!task.started_at || !task.completed_at) return false;
+      return new Date(task.started_at) <= dayEnd && new Date(task.completed_at) >= dayStart;
     });
   }
 
@@ -998,11 +1296,13 @@ function TimeGridViewWithGhosts({ days, visibleEvents, calendarMap, today, onCli
               <div key={i} className="flex-1 border-l border-white/5 px-0.5 py-0.5 flex flex-col gap-0.5 min-h-[24px]">
                 {allDayEvs.map((ev) => {
                   const cal = calendarMap[ev.calendar_id];
+                  const color = ev.color ?? cal?.color ?? "#64748b";
                   return (
-                    <button key={ev.event_id}
+                    <button key={ev.occurrence_id ?? ev.event_id}
                       onClick={(e) => { e.stopPropagation(); onClickEvent(ev, e.currentTarget as HTMLElement); }}
+                      onDoubleClick={(event) => { event.stopPropagation(); onEditEvent(ev); }}
                       className="w-full text-left px-1 rounded text-[10px] leading-5 truncate font-medium"
-                      style={{ backgroundColor: (cal?.color ?? "#64748b") + "33", color: cal?.color ?? "#94a3b8", borderLeft: `2px solid ${cal?.color ?? "#64748b"}` }}>
+                      style={{ backgroundColor: color + "33", color, borderLeft: `2px ${ev.allows_overlap ? "dashed" : "solid"} ${color}` }}>
                       {ev.title}
                     </button>
                   );
@@ -1029,8 +1329,14 @@ function TimeGridViewWithGhosts({ days, visibleEvents, calendarMap, today, onCli
         {days.map((day, colIdx) => {
           const dayEvs = eventsForDay(day).filter((e) => !e.all_day);
           const dayGhosts = ghostsForDay(day);
+          const dayCompletedTasks = completedTasksForDay(day);
           const dayDeadlines = deadlinesForDay(day);
           const isNowDay = day.toDateString() === nowStr;
+          const timedItems = assignTimeColumns([
+            ...dayEvs.map((event) => ({ kind: "event" as const, start: event.start_at, end: event.end_at, event })),
+            ...dayGhosts.map((ghost) => ({ kind: "ghost" as const, start: ghost.suggested_start, end: ghost.suggested_end, ghost })),
+            ...dayCompletedTasks.map((task) => ({ kind: "completed" as const, start: task.started_at!, end: task.completed_at!, task })),
+          ]);
 
           return (
             <div key={colIdx} className="flex-1 border-l border-white/5 relative cursor-pointer"
@@ -1065,49 +1371,63 @@ function TimeGridViewWithGhosts({ days, visibleEvents, calendarMap, today, onCli
                 );
               })}
 
-              {/* Ghost placements (dashed, semi-transparent) */}
-              {dayGhosts.map((g) => {
-                const top = timeToY(g.suggested_start);
-                const height = durationPx(g.suggested_start, g.suggested_end);
-                return (
-                  <div key={g.task_id}
-                    className="absolute left-0.5 right-0.5 rounded px-1.5 py-0.5 text-[11px] text-left overflow-hidden z-5 border border-dashed border-blue-400/50"
-                    style={{ top, height: Math.max(height, 20), backgroundColor: "rgba(59,130,246,0.08)", color: "rgba(147,197,253,0.7)" }}
-                    title={`Suggestion: ${g.task.title}`}
-                  >
-                    <span className="font-medium leading-tight block truncate opacity-70">~{g.task.title}</span>
-                    {height > 30 && (
-                      <span className="opacity-50 text-[10px] leading-tight block">
-                        {formatTime(g.suggested_start)} – {formatTime(g.suggested_end)}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
+              {timedItems.map((item) => {
+                const top = timeToY(item.start);
+                const height = durationPx(item.start, item.end);
+                const horizontalStyle = {
+                  left: `calc(${item.column * 100 / item.columnCount}% + 2px)`,
+                  width: `calc(${100 / item.columnCount}% - 4px)`,
+                };
 
-              {/* Timed events */}
-              {dayEvs.map((ev) => {
-                const cal = calendarMap[ev.calendar_id];
-                const top = timeToY(ev.start_at);
-                const height = durationPx(ev.start_at, ev.end_at);
-                return (
-                  <button key={ev.event_id}
-                    onClick={(e) => { e.stopPropagation(); onClickEvent(ev, e.currentTarget as HTMLElement); }}
-                    className="absolute left-0.5 right-0.5 rounded px-1.5 py-0.5 text-[11px] text-left overflow-hidden z-10 hover:opacity-90 transition-opacity"
-                    style={{
-                      top,
-                      height: Math.max(height, 20),
-                      backgroundColor: (cal?.color ?? "#64748b") + "44",
-                      color: cal?.color ?? "#94a3b8",
-                      borderLeft: `3px solid ${cal?.color ?? "#64748b"}`,
-                    }}
-                  >
-                    <span className="font-medium leading-tight block truncate">{ev.title}</span>
-                    {height > 30 && (
-                      <span className="opacity-70 text-[10px] leading-tight block">
-                        {formatTime(ev.start_at)} – {formatTime(ev.end_at)}
+                if (item.kind === "completed") {
+                  const task = item.task;
+                  const color = task.color ?? (task.calendar_id ? calendarMap[task.calendar_id]?.color : null) ?? "#64748b";
+                  return (
+                    <button key={`completed-${task.task_id}`} type="button"
+                      onClick={(event) => { event.stopPropagation(); onClickTask(task); }}
+                      onDoubleClick={(event) => { event.stopPropagation(); onClickTask(task); }}
+                      className="absolute z-[15] overflow-hidden rounded border px-1.5 py-0.5 text-left text-[11px] hover:opacity-90"
+                      style={{ ...horizontalStyle, top, height: Math.max(height, 20), color, borderColor: color, backgroundColor: color + "33" }}
+                      title={`Terminée · ${formatTime(item.start)}–${formatTime(item.end)}`}>
+                      <span className="flex items-center gap-1 font-medium leading-tight">
+                        <CheckCircleSolidIcon className="h-3 w-3 shrink-0 text-green-400" />
+                        <span className="truncate">{task.title}</span>
                       </span>
-                    )}
+                      {height > 30 && <span className="block text-[10px] leading-tight opacity-70">{formatTime(item.start)} – {formatTime(item.end)}</span>}
+                    </button>
+                  );
+                }
+
+                if (item.kind === "ghost") {
+                  const ghost = item.ghost;
+                  const inProgress = ghost.task.status === "in_progress";
+                  const color = ghost.task.color ?? (ghost.task.calendar_id ? calendarMap[ghost.task.calendar_id]?.color : null) ?? "#94a3b8";
+                  return (
+                    <button key={`${ghost.task_id}-${ghost.suggested_start}`} type="button"
+                      onDoubleClick={(event) => { event.stopPropagation(); onClickTask(ghost.task); }}
+                      className={`absolute z-5 overflow-hidden rounded border px-1.5 py-0.5 text-left text-[11px] ${inProgress ? "" : "border-dashed"}`}
+                      style={{ ...horizontalStyle, top, height: Math.max(height, 20), backgroundColor: color + (inProgress ? "33" : "14"), color, borderColor: color + "80" }}
+                      title={`${inProgress ? "En cours" : "Suggestion"}: ${ghost.task.title}`}>
+                      <span className="flex items-center gap-1 truncate font-medium leading-tight opacity-70">
+                        {inProgress && <ArrowPathIcon className="h-3 w-3 shrink-0" />}
+                        <span className="truncate">{inProgress ? ghost.task.title : `~${ghost.task.title}`}</span>
+                      </span>
+                      {height > 30 && <span className="block text-[10px] leading-tight opacity-50">{formatTime(item.start)} – {formatTime(item.end)}</span>}
+                    </button>
+                  );
+                }
+
+                const event = item.event;
+                const calendar = calendarMap[event.calendar_id];
+                const color = event.color ?? calendar?.color ?? "#64748b";
+                return (
+                  <button key={event.occurrence_id ?? event.event_id}
+                    onClick={(clickEvent) => { clickEvent.stopPropagation(); onClickEvent(event, clickEvent.currentTarget as HTMLElement); }}
+                    onDoubleClick={(clickEvent) => { clickEvent.stopPropagation(); onEditEvent(event); }}
+                    className="absolute z-10 overflow-hidden rounded px-1.5 py-0.5 text-left text-[11px] transition-opacity hover:opacity-90"
+                    style={{ ...horizontalStyle, top, height: Math.max(height, 20), backgroundColor: color + "44", color, borderLeft: `3px ${event.allows_overlap ? "dashed" : "solid"} ${color}` }}>
+                    <span className="block truncate font-medium leading-tight">{event.title}</span>
+                    {height > 30 && <span className="block text-[10px] leading-tight opacity-70">{formatTime(item.start)} – {formatTime(item.end)}</span>}
                   </button>
                 );
               })}
@@ -1263,6 +1583,122 @@ const STATUS_COLORS: Record<TaskStatus, string> = {
   failed: "text-red-400",
 };
 
+const RECURRENCE_DAYS = [
+  { label: "L", day: 1 },
+  { label: "M", day: 2 },
+  { label: "M", day: 3 },
+  { label: "J", day: 4 },
+  { label: "V", day: 5 },
+  { label: "S", day: 6 },
+  { label: "D", day: 0 },
+];
+
+type MaskPickerProps = {
+  masks: Mask[];
+  value: string;
+  onChange: (maskId: string) => void;
+};
+
+function MaskPicker({ masks, value, onChange }: MaskPickerProps) {
+  const selectedMask = masks.find((mask) => mask.mask_id === value);
+  const selectedLabel = selectedMask?.name ?? "";
+  const [query, setQuery] = useState(selectedLabel);
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  const normalizedQuery = query.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const filteredMasks = masks.filter((mask) =>
+    mask.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(normalizedQuery),
+  );
+  const showNoneOption = !normalizedQuery || "aucun libre".includes(normalizedQuery);
+  const options: (Mask | null)[] = [...(showNoneOption ? [null] : []), ...filteredMasks];
+
+  useEffect(() => {
+    setQuery(selectedLabel);
+  }, [selectedLabel]);
+
+  useEffect(() => {
+    function onClickOutside(event: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) {
+        setOpen(false);
+        setQuery(selectedLabel);
+      }
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [selectedLabel]);
+
+  function selectMask(mask: Mask | null) {
+    onChange(mask?.mask_id ?? "");
+    setQuery(mask?.name ?? "");
+    setOpen(false);
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      setOpen(true);
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      setActiveIndex((current) => Math.max(0, Math.min(options.length - 1, current + direction)));
+    } else if (event.key === "Enter" && open && options[activeIndex] !== undefined) {
+      event.preventDefault();
+      selectMask(options[activeIndex]);
+    } else if (event.key === "Escape") {
+      setOpen(false);
+      setQuery(selectedLabel);
+    }
+  }
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <div className="relative">
+        <MagnifyingGlassIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/30" />
+        <input
+          role="combobox"
+          aria-expanded={open}
+          aria-controls="task-mask-options"
+          aria-autocomplete="list"
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setActiveIndex(0);
+            setOpen(true);
+          }}
+          onFocus={(event) => {
+            event.currentTarget.select();
+            setActiveIndex(0);
+            setOpen(true);
+          }}
+          onKeyDown={handleKeyDown}
+          autoComplete="off"
+          placeholder="Rechercher un mask…"
+          className="w-full bg-white/5 border border-white/10 rounded-lg py-1.5 pl-8 pr-3 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-white/30"
+        />
+      </div>
+      {open && (
+        <div id="task-mask-options" role="listbox"
+          className="absolute left-0 right-0 top-full mt-1 z-50 max-h-48 overflow-y-auto rounded-lg border border-white/10 bg-neutral-900 p-1 shadow-xl">
+          {options.length === 0 ? (
+            <div className="px-2 py-2 text-xs text-white/30">Aucun mask trouvé</div>
+          ) : options.map((mask, index) => {
+            const optionValue = mask?.mask_id ?? "";
+            const selected = optionValue === value;
+            return (
+              <button key={optionValue || "none"} type="button" role="option" aria-selected={selected}
+                onMouseEnter={() => setActiveIndex(index)} onClick={() => selectMask(mask)}
+                className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-xs ${index === activeIndex ? "bg-white/10 text-white" : "text-white/60 hover:bg-white/5 hover:text-white"}`}>
+                <span>{mask?.name ?? "Aucun (libre)"}</span>
+                {selected && <CheckIcon className="h-3.5 w-3.5 shrink-0 text-white" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 type TaskFormProps = {
   initial?: Task;
   tasks: Task[];
@@ -1274,6 +1710,26 @@ type TaskFormProps = {
   onClose: () => void;
 };
 
+function TaskOptionSection({ label, open, onToggle, children }: {
+  label: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  const title = label.replace(/^(un|une|des)\s+/, "");
+  const displayTitle = title.charAt(0).toUpperCase() + title.slice(1);
+  return (
+    <div className={`rounded-lg border transition-colors ${open ? "border-white/10 bg-white/[0.02]" : "border-white/5"}`}>
+      <button type="button" onClick={onToggle} aria-expanded={open}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs text-white/60 hover:text-white">
+        <span>{open ? displayTitle : `Ajouter ${label.toLowerCase()}`}</span>
+        {open ? <ChevronDownIcon className="h-3.5 w-3.5 rotate-180" /> : <PlusIcon className="h-3.5 w-3.5" />}
+      </button>
+      {open && <div className="border-t border-white/5 px-3 py-3">{children}</div>}
+    </div>
+  );
+}
+
 function TaskFormModal({ initial, tasks, masks, calendars, events, onSave, onDelete, onClose }: TaskFormProps) {
   const [title, setTitle] = useState(initial?.title ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
@@ -1282,9 +1738,22 @@ function TaskFormModal({ initial, tasks, masks, calendars, events, onSave, onDel
   const [locationLon, setLocationLon] = useState<number | null>(initial?.location_lon ?? null);
   const [status, setStatus] = useState<TaskStatus>(initial?.status ?? "todo");
   const [calendarId, setCalendarId] = useState<string | null>(initial?.calendar_id ?? calendars[0]?.calendar_id ?? null);
+  const [taskColor, setTaskColor] = useState<string | null>(initial?.color ?? null);
   const [durationMinutes, setDurationMinutes] = useState(String(initial?.duration_minutes ?? 30));
   const [priority, setPriority] = useState(String(initial?.priority ?? 0));
+  const [allowsOverlap, setAllowsOverlap] = useState(initial?.allows_overlap ?? false);
+  const [numericEnabled, setNumericEnabled] = useState(initial?.target_count != null);
+  const [targetCount, setTargetCount] = useState(initial?.target_count ?? 1);
+  const [currentCount, setCurrentCount] = useState(initial?.current_count ?? 0);
   const [maskId, setMaskId] = useState(initial?.mask_id ?? "");
+  const defaultRecurrenceEnd = new Date();
+  defaultRecurrenceEnd.setDate(defaultRecurrenceEnd.getDate() + 28);
+  const [recurrenceEnabled, setRecurrenceEnabled] = useState((initial?.recurrence_days?.length ?? 0) > 0);
+  const [recurrenceDays, setRecurrenceDays] = useState<number[]>(initial?.recurrence_days ?? []);
+  const [recurrenceTime, setRecurrenceTime] = useState(initial?.recurrence_time ?? "17:00");
+  const [recurrenceStart, setRecurrenceStart] = useState(initial?.recurrence_start ?? toLocalDateStr(new Date()));
+  const [recurrenceEnd, setRecurrenceEnd] = useState(initial?.recurrence_end ?? toLocalDateStr(defaultRecurrenceEnd));
+  const recurrenceTimezone = initial?.recurrence_timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
 
   // Deadline: display value + resolved ISO + optional linked event id
   const [deadlineDisplay, setDeadlineDisplay] = useState<string>(() => {
@@ -1304,6 +1773,16 @@ function TaskFormModal({ initial, tasks, masks, calendars, events, onSave, onDel
   // For adding a new requirement via LinkedDateInput (used as event picker only here)
   const [reqDisplay, setReqDisplay] = useState("");
   const [reqEventId, setReqEventId] = useState<string | null>(null);
+  const [showMask, setShowMask] = useState(Boolean(initial?.mask_id));
+  const [showRecurrence, setShowRecurrence] = useState((initial?.recurrence_days?.length ?? 0) > 0);
+  const [showDeadline, setShowDeadline] = useState(Boolean(initial?.deadline || initial?.deadline_event_id));
+  const [showRequirements, setShowRequirements] = useState(
+    (initial?.dependencies.length ?? 0) > 0 || (initial?.dependency_event_ids.length ?? 0) > 0,
+  );
+  const [showLocation, setShowLocation] = useState(Boolean(initial?.location || initial?.location_lat != null || initial?.location_lon != null));
+  const [showNotes, setShowNotes] = useState(Boolean(initial?.notes));
+  const [showNumericGoal, setShowNumericGoal] = useState(initial?.target_count != null);
+  const [showNonBlocking, setShowNonBlocking] = useState(initial?.allows_overlap ?? false);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1320,10 +1799,14 @@ function TaskFormModal({ initial, tasks, masks, calendars, events, onSave, onDel
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim()) { setError("Un titre est requis."); return; }
+    if (recurrenceEnabled && recurrenceDays.length === 0) { setError("Sélectionnez au moins un jour de récurrence."); return; }
+    if (recurrenceEnabled && recurrenceEnd < recurrenceStart) { setError("La fin de la récurrence doit suivre son début."); return; }
+    if (numericEnabled && targetCount < 1) { setError("L'objectif numérique doit être supérieur à zéro."); return; }
     setSaving(true);
     try {
       await onSave({
         calendar_id: calendarId,
+        color: taskColor,
         title: title.trim(),
         notes: notes.trim() || null,
         location: location.trim() || null,
@@ -1331,9 +1814,12 @@ function TaskFormModal({ initial, tasks, masks, calendars, events, onSave, onDel
         location_lon: locationLon,
         type: "dynamic",
         status,
+        started_at: initial?.started_at ?? null,
+        completed_at: initial?.completed_at ?? null,
         start_at: null,
         end_at: null,
         all_day: false,
+        allows_overlap: allowsOverlap,
         duration_minutes: parseInt(durationMinutes) || 30,
         deadline: deadlineEventId ? null : deadlineIso,
         deadline_event_id: deadlineEventId,
@@ -1341,6 +1827,13 @@ function TaskFormModal({ initial, tasks, masks, calendars, events, onSave, onDel
         dependencies,
         dependency_event_ids: dependencyEventIds,
         priority: parseInt(priority) || 0,
+        target_count: numericEnabled ? Math.max(1, Math.floor(targetCount)) : null,
+        current_count: numericEnabled ? Math.max(0, Math.min(Math.floor(currentCount), Math.floor(targetCount))) : null,
+        recurrence_days: recurrenceEnabled ? recurrenceDays : [],
+        recurrence_time: recurrenceEnabled ? recurrenceTime : null,
+        recurrence_start: recurrenceEnabled ? recurrenceStart : null,
+        recurrence_end: recurrenceEnabled ? recurrenceEnd : null,
+        recurrence_timezone: recurrenceEnabled ? recurrenceTimezone : null,
       });
       onClose();
     } catch {
@@ -1351,6 +1844,9 @@ function TaskFormModal({ initial, tasks, masks, calendars, events, onSave, onDel
   }
 
   const otherTasks = tasks.filter((t) => t.task_id !== initial?.task_id);
+  const parsedDurationMinutes = parseInt(durationMinutes) || 0;
+  const estimatedTotalMinutes = parsedDurationMinutes * targetCount;
+  const estimatedRemainingMinutes = parsedDurationMinutes * Math.max(0, targetCount - currentCount);
 
   return (
     <Backdrop onClose={onClose}>
@@ -1371,8 +1867,8 @@ function TaskFormModal({ initial, tasks, masks, calendars, events, onSave, onDel
             placeholder="Titre de la tâche" />
 
           {/* Status + Calendar */}
-          <div className="grid grid-cols-2 gap-2">
-            <div className="flex items-center gap-2">
+          <div className={`grid gap-2 ${initial ? "grid-cols-2" : "grid-cols-1"}`}>
+            {initial && <div className="flex items-center gap-2">
               <label className="text-xs text-white/40 shrink-0">Statut</label>
               <select value={status} onChange={(e) => setStatus(e.target.value as TaskStatus)}
                 className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none appearance-none">
@@ -1380,7 +1876,7 @@ function TaskFormModal({ initial, tasks, masks, calendars, events, onSave, onDel
                   <option key={s} value={s} style={{ background: "#171717" }}>{STATUS_LABELS[s]}</option>
                 ))}
               </select>
-            </div>
+            </div>}
             {calendars.length > 0 && (
               <div className="flex items-center gap-2">
                 <label className="text-xs text-white/40 shrink-0">Agenda</label>
@@ -1395,12 +1891,23 @@ function TaskFormModal({ initial, tasks, masks, calendars, events, onSave, onDel
             )}
           </div>
 
+          <ColorOverridePicker
+            value={taskColor}
+            defaultColor={calendars.find((calendar) => calendar.calendar_id === calendarId)?.color ?? "#64748b"}
+            onChange={setTaskColor}
+          />
+
           {/* Duration + Priority */}
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-xs text-white/40 mb-1">Durée (min)</label>
+              <label className="block text-xs text-white/40 mb-1">{numericEnabled ? "Durée unitaire (min)" : "Durée (min)"}</label>
               <input type="number" min="5" step="5" value={durationMinutes} onChange={(e) => setDurationMinutes(e.target.value)}
                 className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none" />
+              {numericEnabled && (
+                <p className="mt-1 text-[10px] leading-tight text-white/40">
+                  Attention, durée unitaire. Total estimé : {estimatedTotalMinutes} min · Restant : {estimatedRemainingMinutes} min
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-xs text-white/40 mb-1">Priorité (0-10)</label>
@@ -1409,31 +1916,118 @@ function TaskFormModal({ initial, tasks, masks, calendars, events, onSave, onDel
             </div>
           </div>
 
-          {/* Mask */}
-          <div>
-            <label className="block text-xs text-white/40 mb-1">Plage horaire (mask)</label>
-            <select value={maskId} onChange={(e) => setMaskId(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none appearance-none">
-              <option value="" style={{ background: "#171717" }}>— aucun (libre) —</option>
-              {masks.map((m) => (
-                <option key={m.mask_id} value={m.mask_id} style={{ background: "#171717" }}>{m.name}</option>
-              ))}
-            </select>
-          </div>
+          <TaskOptionSection label="un objectif numérique" open={showNumericGoal} onToggle={() => {
+            setShowNumericGoal((open) => !open);
+            if (!showNumericGoal) setNumericEnabled(true);
+          }}>
+            <div className="space-y-3">
+              <label className="flex items-center gap-2 text-xs text-white/70 cursor-pointer">
+                <input type="checkbox" checked={numericEnabled} onChange={(event) => setNumericEnabled(event.target.checked)} className="h-3.5 w-3.5 accent-white" />
+                Activer l'objectif numérique
+              </label>
+              {numericEnabled && (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs text-white/40 mb-1">Progression</label>
+                      <div className="flex items-center rounded-lg border border-white/10 bg-white/5">
+                        <button type="button" aria-label="Diminuer" onClick={() => setCurrentCount((count) => Math.max(0, count - 1))}
+                          className="p-1.5 text-white/40 hover:text-white"><MinusIcon className="h-3.5 w-3.5" /></button>
+                        <input type="number" min="0" max={targetCount} value={currentCount}
+                          onChange={(event) => setCurrentCount(Math.max(0, Math.min(Number(event.target.value), targetCount)))}
+                          className="min-w-0 flex-1 bg-transparent text-center text-xs text-white focus:outline-none" />
+                        <button type="button" aria-label="Augmenter" onClick={() => setCurrentCount((count) => Math.min(targetCount, count + 1))}
+                          className="p-1.5 text-white/40 hover:text-white"><PlusIcon className="h-3.5 w-3.5" /></button>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-white/40 mb-1">Objectif</label>
+                      <input type="number" min="1" value={targetCount} onChange={(event) => {
+                        const target = Math.max(1, Number(event.target.value));
+                        setTargetCount(target);
+                        setCurrentCount((count) => Math.min(count, target));
+                      }} className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-white focus:outline-none" />
+                    </div>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                    <div className="h-full bg-white transition-[width]" style={{ width: `${Math.min(100, currentCount / targetCount * 100)}%` }} />
+                  </div>
+                </>
+              )}
+            </div>
+          </TaskOptionSection>
 
-          {/* Deadline */}
-          <LinkedDateInput
-            label="Deadline (optionnel)"
-            value={deadlineDisplay}
-            linkedEventId={deadlineEventId}
-            events={events}
-            onChange={setDeadlineDisplay}
-            onSelect={(iso, evId) => { setDeadlineIso(iso); setDeadlineEventId(evId); }}
-            onClear={() => { setDeadlineIso(null); setDeadlineEventId(null); }}
-          />
+          <TaskOptionSection label="un créneau non bloquant" open={showNonBlocking} onToggle={() => {
+            setShowNonBlocking((open) => !open);
+            if (!showNonBlocking) setAllowsOverlap(true);
+          }}>
+            <label className="flex items-center gap-2 text-xs text-white/70 cursor-pointer">
+              <input type="checkbox" checked={allowsOverlap} onChange={(event) => setAllowsOverlap(event.target.checked)}
+                className="h-3.5 w-3.5 accent-white" />
+              Autoriser le chevauchement
+            </label>
+          </TaskOptionSection>
 
-          {/* Requirements */}
-          <div>
+          <TaskOptionSection label="un masque" open={showMask} onToggle={() => setShowMask((open) => !open)}>
+            <MaskPicker masks={masks} value={maskId} onChange={setMaskId} />
+          </TaskOptionSection>
+
+          <TaskOptionSection label="une récurrence" open={showRecurrence} onToggle={() => {
+            setShowRecurrence((open) => !open);
+            if (!showRecurrence) setRecurrenceEnabled(true);
+          }}>
+            <div className="space-y-3">
+              <label className="flex items-center gap-2 text-xs text-white/70 cursor-pointer">
+                <input type="checkbox" checked={recurrenceEnabled} onChange={(e) => setRecurrenceEnabled(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-white" />
+                Activer la récurrence
+              </label>
+              {recurrenceEnabled && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="grid grid-cols-7 gap-1" role="group" aria-label="Jours de récurrence">
+                    {RECURRENCE_DAYS.map(({ label, day }) => {
+                      const selected = recurrenceDays.includes(day);
+                      return (
+                        <button key={day} type="button" aria-label={DAY_NAMES[day]} aria-pressed={selected}
+                          onClick={() => setRecurrenceDays(selected ? recurrenceDays.filter((value) => value !== day) : [...recurrenceDays, day])}
+                          className={`h-7 w-7 rounded border text-xs transition-colors ${selected ? "bg-white/20 border-white/60 text-white" : "bg-white/5 border-white/10 text-white/40 hover:text-white/70"}`}>
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button type="button" onClick={() => {
+                    setRecurrenceDays([1, 2, 3, 4, 5]);
+                    const weekMask = masks.find((mask) => mask.mask_id === "native-week" || mask.name === "Semaine");
+                    if (weekMask) { setMaskId(weekMask.mask_id); setShowMask(true); }
+                  }} className="text-xs text-white/60 hover:text-white transition-colors">
+                    Semaine
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Heure</label>
+                    <input type="time" required value={recurrenceTime} onChange={(e) => setRecurrenceTime(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Du</label>
+                    <input type="date" required value={recurrenceStart} onChange={(e) => setRecurrenceStart(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Au</label>
+                    <input type="date" required min={recurrenceStart} value={recurrenceEnd} onChange={(e) => setRecurrenceEnd(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none" />
+                  </div>
+                </div>
+              </div>
+              )}
+            </div>
+          </TaskOptionSection>
+
+          <TaskOptionSection label="un prérequis" open={showRequirements} onToggle={() => setShowRequirements((open) => !open)}>
             <label className="block text-xs text-white/40 mb-1">Prérequis (optionnel)</label>
             {/* Add via linked input */}
             <div className="flex gap-1 mb-2">
@@ -1483,7 +2077,7 @@ function TaskFormModal({ initial, tasks, masks, calendars, events, onSave, onDel
                     <label key={t.task_id} className="flex items-center gap-2 cursor-pointer py-0.5">
                       <input type="checkbox" checked={checked}
                         onChange={() => setDependencies(checked ? dependencies.filter((d) => d !== t.task_id) : [...dependencies, t.task_id])}
-                        className="accent-blue-500" />
+                        className="accent-white" />
                       <span className="text-xs text-white/60 truncate flex-1">{t.title}</span>
                       <span className={`text-[10px] shrink-0 ${STATUS_COLORS[t.status]}`}>{STATUS_LABELS[t.status]}</span>
                     </label>
@@ -1491,22 +2085,33 @@ function TaskFormModal({ initial, tasks, masks, calendars, events, onSave, onDel
                 })}
               </div>
             )}
-          </div>
+          </TaskOptionSection>
 
-          {/* Location */}
-          <div className="flex items-start gap-0">
+          <TaskOptionSection label="une échéance" open={showDeadline} onToggle={() => setShowDeadline((open) => !open)}>
+            <LinkedDateInput
+              label="Échéance"
+              value={deadlineDisplay}
+              linkedEventId={deadlineEventId}
+              events={events}
+              onChange={setDeadlineDisplay}
+              onSelect={(iso, evId) => { setDeadlineIso(iso); setDeadlineEventId(evId); }}
+              onClear={() => { setDeadlineIso(null); setDeadlineEventId(null); }}
+            />
+          </TaskOptionSection>
+
+          <TaskOptionSection label="un lieu" open={showLocation} onToggle={() => setShowLocation((open) => !open)}>
             <LocationInput value={location}
               onChange={(v) => { setLocation(v); setLocationLat(null); setLocationLon(null); }}
               onSelect={(r) => { setLocationLat(r.lat); setLocationLon(r.lon); }} />
-          </div>
+          </TaskOptionSection>
 
-          {/* Notes */}
+          <TaskOptionSection label="des notes" open={showNotes} onToggle={() => setShowNotes((open) => !open)}>
           <div className="flex items-start gap-2">
-            <Bars3BottomLeftIcon className="h-4 w-4 text-white/40 mt-2 shrink-0" />
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
               className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/30 resize-none"
               placeholder="Notes (optionnel)" />
           </div>
+          </TaskOptionSection>
 
           {error && <p className="text-xs text-red-400">{error}</p>}
 
@@ -1542,16 +2147,18 @@ const DAY_SHORT_ORDERED: { label: string; value: number }[] = [
   { label: "Sam", value: 6 },
   { label: "Dim", value: 0 },
 ];
-const DAY_SHORT = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"]; // index = JS day (0=Sun)
-
-function MaskFormModal({ onSave, onClose, allMasks }: {
+function MaskFormModal({ initial, onSave, onDelete, onClose, allMasks }: {
+  initial?: Mask;
   onSave: (payload: Omit<Mask, "mask_id" | "created_at" | "updated_at">) => Promise<void>;
+  onDelete?: () => Promise<void>;
   onClose: () => void;
   allMasks: Mask[];
 }) {
-  const [name, setName] = useState("");
-  const [slots, setSlots] = useState<MaskSlot[]>([]);
-  const [ops, setOps] = useState<{ op: "add" | "subtract"; mask_id: string }[]>([]);
+  const readOnly = initial?.type === "native";
+  const [name, setName] = useState(initial?.name ?? "");
+  const [slots, setSlots] = useState<MaskSlot[]>(initial?.slots ?? []);
+  const [dateRanges, setDateRanges] = useState<MaskDateRange[]>(initial?.date_ranges ?? []);
+  const [ops, setOps] = useState<{ op: "add" | "subtract"; mask_id: string }[]>(initial?.operations ?? []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1567,6 +2174,17 @@ function MaskFormModal({ onSave, onClose, allMasks }: {
     setSlots(slots.map((s, idx) => idx === i ? { ...s, [field]: value } : s));
   }
 
+  function addDateRange() {
+    const start = toLocalDateStr(new Date());
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() + 7);
+    setDateRanges([...dateRanges, { start_date: start, end_date: toLocalDateStr(endDate), start: "00:00", end: "23:59" }]);
+  }
+
+  function updateDateRange(i: number, field: keyof MaskDateRange, value: string) {
+    setDateRanges(dateRanges.map((range, index) => index === i ? { ...range, [field]: value } : range));
+  }
+
   function addOp() {
     const firstOtherMask = allMasks[0];
     if (!firstOtherMask) return;
@@ -1575,10 +2193,15 @@ function MaskFormModal({ onSave, onClose, allMasks }: {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (readOnly) { onClose(); return; }
     if (!name.trim()) { setError("Un nom est requis."); return; }
+    if (dateRanges.some((range) => range.end_date < range.start_date || range.end <= range.start)) {
+      setError("Chaque plage stricte doit avoir une fin postérieure à son début.");
+      return;
+    }
     setSaving(true);
     try {
-      await onSave({ name: name.trim(), type: "custom", slots, operations: ops });
+      await onSave({ name: name.trim(), type: "custom", slots, date_ranges: dateRanges, operations: ops });
       onClose();
     } catch {
       setError("Erreur lors de la sauvegarde.");
@@ -1591,35 +2214,62 @@ function MaskFormModal({ onSave, onClose, allMasks }: {
     <Backdrop onClose={onClose}>
       <div className="bg-black/40 backdrop-blur-sm border border-white/10 rounded-xl shadow-2xl w-full max-w-md p-5 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-white font-semibold text-sm">Nouveau mask horaire</h2>
+          <h2 className="text-white font-semibold text-sm">
+            {readOnly ? "Détail du mask" : initial ? "Modifier le mask" : "Nouveau mask"}
+          </h2>
           <button onClick={onClose} className="text-white/40 hover:text-white"><XMarkIcon className="h-4 w-4" /></button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-3">
-          <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
-            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-sky-500/60"
+          <input autoFocus={!readOnly} value={name} onChange={(e) => setName(e.target.value)} disabled={readOnly}
+            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/30 disabled:opacity-60"
             placeholder="Nom du mask (ex: Travail, Ouverture magasin…)" />
 
           <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-white/40">Créneaux horaires</span>
-              <button type="button" onClick={addSlot} className="text-xs text-sky-400 hover:text-sky-300 flex items-center gap-1">
+              {!readOnly && <button type="button" onClick={addSlot} className="text-xs text-white/60 hover:text-white flex items-center gap-1">
                 <PlusIcon className="h-3 w-3" /> Ajouter
-              </button>
+              </button>}
             </div>
             {slots.map((slot, i) => (
               <div key={i} className="flex items-center gap-1.5 mb-1.5">
-                <select value={slot.day} onChange={(e) => updateSlot(i, "day", parseInt(e.target.value))}
+                <select value={slot.day} disabled={readOnly} onChange={(e) => updateSlot(i, "day", parseInt(e.target.value))}
                   className="bg-white/5 border border-white/10 rounded px-1.5 py-1 text-xs text-white focus:outline-none appearance-none">
                   {DAY_SHORT_ORDERED.map((d) => <option key={d.value} value={d.value} style={{ background: "#171717" }}>{d.label}</option>)}
                 </select>
-                <input type="time" value={slot.start} onChange={(e) => updateSlot(i, "start", e.target.value)}
+                <input type="time" value={slot.start} disabled={readOnly} onChange={(e) => updateSlot(i, "start", e.target.value)}
                   className="bg-white/5 border border-white/10 rounded px-1.5 py-1 text-xs text-white focus:outline-none [color-scheme:dark]" />
                 <span className="text-white/30 text-xs">→</span>
-                <input type="time" value={slot.end} onChange={(e) => updateSlot(i, "end", e.target.value)}
+                <input type="time" value={slot.end} disabled={readOnly} onChange={(e) => updateSlot(i, "end", e.target.value)}
                   className="bg-white/5 border border-white/10 rounded px-1.5 py-1 text-xs text-white focus:outline-none [color-scheme:dark]" />
-                <button type="button" onClick={() => removeSlot(i)} className="text-white/30 hover:text-red-400 p-0.5">
+                {!readOnly && <button type="button" onClick={() => removeSlot(i)} className="text-white/30 hover:text-red-400 p-0.5">
                   <XMarkIcon className="h-3.5 w-3.5" />
-                </button>
+                </button>}
+              </div>
+            ))}
+          </div>
+
+          <div className="border-t border-white/10 pt-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-white/40">Plages strictes</span>
+              {!readOnly && <button type="button" onClick={addDateRange} className="text-xs text-white/60 hover:text-white flex items-center gap-1">
+                <PlusIcon className="h-3 w-3" /> Ajouter
+              </button>}
+            </div>
+            {dateRanges.length === 0 && <p className="text-xs text-white/20 italic">Aucune plage datée</p>}
+            {dateRanges.map((range, i) => (
+              <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-1.5 mb-2 rounded-lg border border-white/5 p-2">
+                <input type="date" value={range.start_date} disabled={readOnly} onChange={(e) => updateDateRange(i, "start_date", e.target.value)}
+                  className="bg-white/5 border border-white/10 rounded px-1.5 py-1 text-xs text-white focus:outline-none [color-scheme:dark]" />
+                <input type="date" min={range.start_date} value={range.end_date} disabled={readOnly} onChange={(e) => updateDateRange(i, "end_date", e.target.value)}
+                  className="bg-white/5 border border-white/10 rounded px-1.5 py-1 text-xs text-white focus:outline-none [color-scheme:dark]" />
+                {!readOnly && <button type="button" onClick={() => setDateRanges(dateRanges.filter((_, index) => index !== i))} className="text-white/30 hover:text-red-400 p-0.5 row-span-2">
+                  <XMarkIcon className="h-3.5 w-3.5" />
+                </button>}
+                <input type="time" value={range.start} disabled={readOnly} onChange={(e) => updateDateRange(i, "start", e.target.value)}
+                  className="bg-white/5 border border-white/10 rounded px-1.5 py-1 text-xs text-white focus:outline-none [color-scheme:dark]" />
+                <input type="time" value={range.end} disabled={readOnly} onChange={(e) => updateDateRange(i, "end", e.target.value)}
+                  className="bg-white/5 border border-white/10 rounded px-1.5 py-1 text-xs text-white focus:outline-none [color-scheme:dark]" />
               </div>
             ))}
           </div>
@@ -1628,35 +2278,41 @@ function MaskFormModal({ onSave, onClose, allMasks }: {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs text-white/40">Opérations sur d'autres masks</span>
-                <button type="button" onClick={addOp} className="text-xs text-sky-400 hover:text-sky-300 flex items-center gap-1">
+                {!readOnly && <button type="button" onClick={addOp} className="text-xs text-white/60 hover:text-white flex items-center gap-1">
                   <PlusIcon className="h-3 w-3" /> Ajouter
-                </button>
+                </button>}
               </div>
               {ops.map((op, i) => (
                 <div key={i} className="flex items-center gap-1.5 mb-1.5">
-                  <select value={op.op} onChange={(e) => setOps(ops.map((o, idx) => idx === i ? { ...o, op: e.target.value as "add" | "subtract" } : o))}
+                  <select value={op.op} disabled={readOnly} onChange={(e) => setOps(ops.map((o, idx) => idx === i ? { ...o, op: e.target.value as "add" | "subtract" } : o))}
                     className="bg-white/5 border border-white/10 rounded px-1.5 py-1 text-xs text-white focus:outline-none appearance-none">
                     <option value="add" style={{ background: "#171717" }}>+ Ajouter</option>
                     <option value="subtract" style={{ background: "#171717" }}>− Soustraire</option>
                   </select>
-                  <select value={op.mask_id} onChange={(e) => setOps(ops.map((o, idx) => idx === i ? { ...o, mask_id: e.target.value } : o))}
+                  <select value={op.mask_id} disabled={readOnly} onChange={(e) => setOps(ops.map((o, idx) => idx === i ? { ...o, mask_id: e.target.value } : o))}
                     className="flex-1 bg-white/5 border border-white/10 rounded px-1.5 py-1 text-xs text-white focus:outline-none appearance-none">
                     {allMasks.map((m) => <option key={m.mask_id} value={m.mask_id} style={{ background: "#171717" }}>{m.name}</option>)}
                   </select>
-                  <button type="button" onClick={() => setOps(ops.filter((_, idx) => idx !== i))} className="text-white/30 hover:text-red-400 p-0.5">
+                  {!readOnly && <button type="button" onClick={() => setOps(ops.filter((_, idx) => idx !== i))} className="text-white/30 hover:text-red-400 p-0.5">
                     <XMarkIcon className="h-3.5 w-3.5" />
-                  </button>
+                  </button>}
                 </div>
               ))}
             </div>
           )}
 
           {error && <p className="text-xs text-red-400">{error}</p>}
-          <div className="flex justify-end gap-2 pt-1">
+          <div className="flex items-center justify-between gap-2 pt-1">
+            {onDelete && !readOnly ? (
+              <button type="button" onClick={() => { void onDelete().then(onClose); }}
+                className="text-xs text-red-400 hover:text-red-300 transition-colors">Supprimer</button>
+            ) : <span />}
+            <div className="flex gap-2">
             <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition-all">Annuler</button>
-            <button type="submit" disabled={saving} className="px-3 py-1.5 text-xs rounded-lg bg-white hover:bg-white/90 text-neutral-900 font-medium disabled:opacity-50">
-              {saving ? "…" : "Créer"}
-            </button>
+            {!readOnly && <button type="submit" disabled={saving} className="px-3 py-1.5 text-xs rounded-lg bg-white hover:bg-white/90 text-neutral-900 font-medium disabled:opacity-50">
+              {saving ? "…" : initial ? "Enregistrer" : "Créer"}
+            </button>}
+            </div>
           </div>
         </form>
       </div>
@@ -1671,29 +2327,69 @@ type SidePanel = "calendars" | "tasks" | "masks";
 type TaskPoolPanelProps = {
   tasks: Task[];
   masks: Mask[];
+  calendars: Calendar[];
   onNewTask: () => void;
   onEditTask: (t: Task) => void;
   onQuickStatus: (t: Task, s: TaskStatus) => void;
+  onDeleteTask: (t: Task) => Promise<void>;
+  onConvertTask: (t: Task) => Promise<void>;
+  onDuplicateTask: (task: Task) => Promise<void>;
+  onIncrementTask: (task: Task) => Promise<void>;
 };
 
-function TaskPoolPanel({ tasks, masks, onNewTask, onEditTask, onQuickStatus }: TaskPoolPanelProps) {
+function TaskPoolPanel({ tasks, masks, calendars, onNewTask, onEditTask, onQuickStatus, onDeleteTask, onConvertTask, onDuplicateTask, onIncrementTask }: TaskPoolPanelProps) {
+  const [contextMenu, setContextMenu] = useState<{ task: Task; x: number; y: number } | null>(null);
+  const [incrementingTaskId, setIncrementingTaskId] = useState<string | null>(null);
   const doneTasks = new Set(tasks.filter((t) => t.status === "done").map((t) => t.task_id));
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener("mousedown", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [contextMenu]);
 
   function isUnlocked(t: Task): boolean {
     return t.type !== "dynamic" || t.dependencies.every((d) => doneTasks.has(d));
   }
 
+  async function incrementTask(task: Task) {
+    if (incrementingTaskId) return;
+    setIncrementingTaskId(task.task_id);
+    try {
+      await onIncrementTask(task);
+    } finally {
+      setIncrementingTaskId(null);
+    }
+  }
+
   const byStatus: Record<TaskStatus, Task[]> = { todo: [], in_progress: [], done: [], failed: [] };
   for (const t of tasks) byStatus[t.status].push(t);
+  byStatus.todo.sort((left, right) => {
+    const availabilityDelta = Number(isUnlocked(right)) - Number(isUnlocked(left));
+    if (availabilityDelta !== 0) return availabilityDelta;
+    if (right.priority !== left.priority) return right.priority - left.priority;
+    if (left.deadline && right.deadline) return left.deadline.localeCompare(right.deadline);
+    if (left.deadline) return -1;
+    if (right.deadline) return 1;
+    return left.created_at.localeCompare(right.created_at);
+  });
+  byStatus.in_progress.sort((left, right) => (left.started_at ?? left.updated_at).localeCompare(right.started_at ?? right.updated_at));
+  byStatus.done.sort((left, right) => (right.completed_at ?? right.updated_at).localeCompare(left.completed_at ?? left.updated_at));
 
   const sections: { key: TaskStatus; label: string; icon: React.ReactNode }[] = [
-    { key: "todo", label: "À faire", icon: <ListBulletIcon className="h-3.5 w-3.5" /> },
     { key: "in_progress", label: "En cours", icon: <ArrowPathIcon className="h-3.5 w-3.5" /> },
-    { key: "done", label: "Terminé", icon: <CheckCircleIcon className="h-3.5 w-3.5" /> },
+    { key: "todo", label: "À faire", icon: <ListBulletIcon className="h-3.5 w-3.5" /> },
     { key: "failed", label: "Échoué", icon: <ExclamationCircleIcon className="h-3.5 w-3.5" /> },
+    { key: "done", label: "Terminé", icon: <CheckCircleIcon className="h-3.5 w-3.5" /> },
   ];
 
   return (
+    <>
     <div className="flex flex-col gap-3 overflow-y-auto flex-1">
       <button
         onClick={onNewTask}
@@ -1720,6 +2416,7 @@ function TaskPoolPanel({ tasks, masks, onNewTask, onEditTask, onQuickStatus }: T
               {sectionTasks.map((t) => {
                 const unlocked = isUnlocked(t);
                 const mask = t.mask_id ? masks.find((m) => m.mask_id === t.mask_id) : null;
+                const color = t.color ?? (t.calendar_id ? calendars.find((calendar) => calendar.calendar_id === t.calendar_id)?.color : null) ?? "#64748b";
                 return (
                   <div
                     key={t.task_id}
@@ -1729,11 +2426,23 @@ function TaskPoolPanel({ tasks, masks, onNewTask, onEditTask, onQuickStatus }: T
                         : "border-white/5 bg-black/20 opacity-50"
                     }`}
                     onClick={() => onEditTask(t)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      setContextMenu({
+                        task: t,
+                        x: Math.min(event.clientX, window.innerWidth - 190),
+                        y: Math.min(event.clientY, window.innerHeight - 170),
+                      });
+                    }}
                   >
                     <div className="flex items-center gap-1.5 min-w-0">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
+                          if (t.target_count != null) {
+                            void incrementTask(t);
+                            return;
+                          }
                           const next: TaskStatus = t.status === "done" ? "todo" : t.status === "todo" ? "in_progress" : t.status === "in_progress" ? "done" : "todo";
                           onQuickStatus(t, next);
                         }}
@@ -1750,16 +2459,39 @@ function TaskPoolPanel({ tasks, masks, onNewTask, onEditTask, onQuickStatus }: T
                       <span className={`text-xs truncate flex-1 ${t.status === "done" ? "line-through text-white/30" : "text-white/70"}`}>
                         {t.title}
                       </span>
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
                       <span className={`text-[9px] shrink-0 rounded px-1 py-0.5 ${t.type === "fixed" ? "bg-red-500/20 text-red-400" : "bg-blue-500/20 text-blue-400"}`}>
                         {t.type === "fixed" ? "fixe" : "dyn."}
                       </span>
                     </div>
                     {t.type === "dynamic" && (
                       <div className="flex items-center gap-2 mt-0.5 pl-5 flex-wrap">
+                        {t.target_count != null && t.current_count != null && (
+                          <div className="flex w-full items-center gap-1.5">
+                            <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/10">
+                              <div className="h-full rounded-full" style={{ width: `${Math.min(100, t.current_count / t.target_count * 100)}%`, backgroundColor: color }} />
+                            </div>
+                            <span className="text-[10px] tabular-nums text-white/40">{t.current_count}/{t.target_count}</span>
+                            {t.current_count < t.target_count && (
+                              <button type="button" title="Incrémenter" aria-label={`Incrémenter ${t.title}`}
+                                disabled={incrementingTaskId === t.task_id}
+                                onClick={(event) => { event.stopPropagation(); void incrementTask(t); }}
+                                className="flex h-4 w-4 items-center justify-center rounded text-white/40 hover:bg-white/10 hover:text-white disabled:opacity-30">
+                                <PlusIcon className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
+                        )}
                         {t.duration_minutes && (
                           <span className="text-[10px] text-white/30 flex items-center gap-0.5">
-                            <ClockIcon className="h-2.5 w-2.5" />{t.duration_minutes}min
+                            <ClockIcon className="h-2.5 w-2.5" />
+                            {t.target_count != null && t.current_count != null
+                              ? `${t.duration_minutes} min/unité · ${t.duration_minutes * Math.max(0, t.target_count - t.current_count)} min restantes`
+                              : `${t.duration_minutes} min`}
                           </span>
+                        )}
+                        {t.allows_overlap && (
+                          <span className="text-[10px] text-white/35">non bloquant</span>
                         )}
                         {t.deadline && (
                           <span className="text-[10px] text-orange-400/70 flex items-center gap-0.5">
@@ -1786,16 +2518,47 @@ function TaskPoolPanel({ tasks, masks, onNewTask, onEditTask, onQuickStatus }: T
         );
       })}
     </div>
+    {contextMenu && (
+      <div className="fixed z-[70] min-w-44 rounded-lg border border-white/10 bg-neutral-900 p-1 shadow-xl"
+        style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(event) => event.stopPropagation()}>
+        <button type="button" onClick={() => { onEditTask(contextMenu.task); setContextMenu(null); }}
+          className="flex w-full items-center gap-2 rounded px-2.5 py-2 text-left text-xs text-white/70 hover:bg-white/10 hover:text-white">
+          <PencilIcon className="h-3.5 w-3.5" /> Modifier
+        </button>
+        <button type="button" onClick={() => { void onDuplicateTask(contextMenu.task); setContextMenu(null); }}
+          className="flex w-full items-center gap-2 rounded px-2.5 py-2 text-left text-xs text-white/70 hover:bg-white/10 hover:text-white">
+          <DocumentDuplicateIcon className="h-3.5 w-3.5" /> Dupliquer
+        </button>
+        <button type="button" onClick={() => { void onConvertTask(contextMenu.task); setContextMenu(null); }}
+          className="flex w-full items-center gap-2 rounded px-2.5 py-2 text-left text-xs text-white/70 hover:bg-white/10 hover:text-white">
+          <CalendarDaysIcon className="h-3.5 w-3.5" /> Convertir en événement
+        </button>
+        <div className="my-1 h-px bg-white/10" />
+        <button type="button" onClick={() => {
+          const task = contextMenu.task;
+          setContextMenu(null);
+          if (window.confirm(`Supprimer la tâche « ${task.title} » ?`)) void onDeleteTask(task);
+        }} className="flex w-full items-center gap-2 rounded px-2.5 py-2 text-left text-xs text-red-300 hover:bg-red-500/15">
+          <TrashIcon className="h-3.5 w-3.5" /> Supprimer
+        </button>
+      </div>
+    )}
+    </>
   );
 }
 
 // ─── Masks panel ──────────────────────────────────────────────────────────────
 
-function MasksPanelContent({ masks, onNewMask, onDeleteMask }: {
+function MasksPanelContent({ masks, onNewMask, onOpenMask }: {
   masks: Mask[];
   onNewMask: () => void;
-  onDeleteMask: (id: string) => void;
+  onOpenMask: (mask: Mask) => void;
 }) {
+  const groups = [
+    { label: "Primitifs", masks: masks.filter((mask) => mask.type === "native") },
+    { label: "Personnalisés", masks: masks.filter((mask) => mask.type === "custom") },
+  ];
+
   return (
     <div className="flex flex-col gap-3 overflow-y-auto flex-1">
       <button
@@ -1805,42 +2568,23 @@ function MasksPanelContent({ masks, onNewMask, onDeleteMask }: {
         <PlusIcon className="h-3.5 w-3.5" />
         Nouveau mask
       </button>
-      {masks.map((m) => (
-        <div key={m.mask_id} className="rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-2">
-          <div className="flex items-center justify-between mb-1">
-            <div className="flex items-center gap-1.5">
-              <AdjustmentsHorizontalIcon className="h-3.5 w-3.5 text-purple-400/70" />
-              <span className="text-xs text-white/70 font-medium">{m.name}</span>
-              <span className={`text-[9px] rounded px-1 py-0.5 ${m.type === "native" ? "bg-white/10 text-white/40" : "bg-purple-500/20 text-purple-400"}`}>
-                {m.type === "native" ? "natif" : "custom"}
-              </span>
-            </div>
-            {m.type === "custom" && (
-              <button onClick={() => onDeleteMask(m.mask_id)} className="text-white/20 hover:text-red-400 transition-colors">
-                <TrashIcon className="h-3 w-3" />
+      {groups.map((group) => (
+        <section key={group.label}>
+          <h3 className="mb-1.5 text-[10px] font-semibold uppercase text-white/30">{group.label}</h3>
+          <div className="flex flex-col gap-1">
+            {group.masks.length === 0 && <span className="px-1 text-xs italic text-white/15">Aucun mask</span>}
+            {group.masks.map((mask) => (
+              <button key={mask.mask_id} onClick={() => onOpenMask(mask)}
+                className="flex w-full items-center gap-2 rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-2 text-left hover:bg-white/[0.06] transition-colors">
+                <AdjustmentsHorizontalIcon className="h-3.5 w-3.5 shrink-0 text-white/40" />
+                <span className="min-w-0 flex-1 truncate text-xs font-medium text-white/70">{mask.name}</span>
+                <span className="rounded bg-white/10 px-1 py-0.5 text-[9px] text-white/40">
+                  {mask.type === "native" ? "natif" : "user"}
+                </span>
               </button>
-            )}
+            ))}
           </div>
-          {m.slots.length > 0 && (
-            <div className="flex flex-wrap gap-1 pl-5">
-              {m.slots.slice(0, 4).map((s, i) => (
-                <span key={i} className="text-[9px] bg-white/5 rounded px-1 py-0.5 text-white/40">
-                  {DAY_SHORT[s.day]} {s.start}-{s.end}
-                </span>
-              ))}
-              {m.slots.length > 4 && <span className="text-[9px] text-white/20">+{m.slots.length - 4}</span>}
-            </div>
-          )}
-          {m.operations.length > 0 && (
-            <div className="flex flex-wrap gap-1 pl-5 mt-0.5">
-              {m.operations.map((op, i) => (
-                <span key={i} className="text-[9px] text-purple-400/60">
-                  {op.op === "add" ? "+" : "−"} {masks.find((x) => x.mask_id === op.mask_id)?.name ?? "?"}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
+        </section>
       ))}
     </div>
   );
@@ -1877,6 +2621,7 @@ export default function CalendarPage() {
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [showMaskForm, setShowMaskForm] = useState(false);
+  const [editingMask, setEditingMask] = useState<Mask | null>(null);
 
   // Event detail popover
   const [detailEvent, setDetailEvent] = useState<CalendarEvent | null>(null);
@@ -1954,17 +2699,7 @@ export default function CalendarPage() {
 
   // ── Events ──────────────────────────────────────────────────────────────────
 
-  async function handleSaveEvent(data: {
-    calendar_id: string;
-    title: string;
-    description: string;
-    location: string;
-    location_lat: number | null;
-    location_lon: number | null;
-    all_day: boolean;
-    start_at: string;
-    end_at: string;
-  }) {
+  async function handleSaveEvent(data: Parameters<typeof createEvent>[0]) {
     if (editingEvent) {
       const updated = await updateEvent(editingEvent.event_id, data);
       setEvents((prev) => prev.map((e) => e.event_id === updated.event_id ? updated : e));
@@ -2017,13 +2752,96 @@ export default function CalendarPage() {
     setEditingTask(null);
   }
 
-  async function handleDeleteTask() {
-    if (!editingTask) return;
-    await deleteTask(editingTask.task_id);
-    setTasks((prev) => prev.filter((t) => t.task_id !== editingTask.task_id));
+  async function deleteTaskRecord(task: Task) {
+    await deleteTask(task.task_id);
+    setTasks((prev) => prev.filter((item) => item.task_id !== task.task_id));
     const newGhosts = await fetchGhostPlacements();
     setGhosts(newGhosts);
+  }
+
+  async function handleDeleteTask() {
+    if (!editingTask) return;
+    await deleteTaskRecord(editingTask);
     setEditingTask(null);
+  }
+
+  async function handleConvertTask(task: Task) {
+    const calendarId = task.calendar_id ?? calendars[0]?.calendar_id;
+    if (!calendarId) {
+      setEditingCalendar(null);
+      setShowCalendarForm(true);
+      return;
+    }
+
+    const firstGhost = ghosts
+      .filter((ghost) => ghost.task_id === task.task_id)
+      .sort((left, right) => left.suggested_start.localeCompare(right.suggested_start))[0];
+    const fallbackStart = new Date();
+    fallbackStart.setSeconds(0, 0);
+    fallbackStart.setMinutes(Math.ceil(fallbackStart.getMinutes() / 30) * 30);
+    const startAt = task.start_at ?? firstGhost?.suggested_start ?? fallbackStart.toISOString();
+    const endAt = task.end_at ?? firstGhost?.suggested_end
+      ?? new Date(new Date(startAt).getTime() + (task.duration_minutes ?? 30) * 60_000).toISOString();
+
+    const created = await createEvent({
+      calendar_id: calendarId,
+      color: task.color,
+      title: task.title,
+      description: task.notes ?? "",
+      location: task.location ?? "",
+      location_lat: task.location_lat,
+      location_lon: task.location_lon,
+      all_day: task.all_day,
+      allows_overlap: task.allows_overlap,
+      start_at: startAt,
+      end_at: endAt,
+      recurrence_days: task.recurrence_days,
+      recurrence_start: task.recurrence_start,
+      recurrence_end: task.recurrence_end,
+      recurrence_timezone: task.recurrence_timezone,
+    });
+    await deleteTask(task.task_id);
+    setEvents((prev) => [...prev, created]);
+    setTasks((prev) => prev.filter((item) => item.task_id !== task.task_id));
+    setGhosts(await fetchGhostPlacements());
+    setEditingTask(null);
+    setShowTaskForm(false);
+  }
+
+  async function handleDuplicateTask(task: Task) {
+    const duplicated = await createTask({
+      calendar_id: task.calendar_id,
+      color: task.color,
+      title: `${task.title} (copie)`,
+      notes: task.notes,
+      location: task.location,
+      location_lat: task.location_lat,
+      location_lon: task.location_lon,
+      type: "dynamic",
+      status: "todo",
+      started_at: null,
+      completed_at: null,
+      start_at: null,
+      end_at: null,
+      all_day: false,
+      allows_overlap: task.allows_overlap,
+      duration_minutes: task.duration_minutes,
+      deadline: task.deadline,
+      deadline_event_id: task.deadline_event_id,
+      mask_id: task.mask_id,
+      dependencies: [...task.dependencies],
+      dependency_event_ids: [...task.dependency_event_ids],
+      priority: task.priority,
+      target_count: task.target_count,
+      current_count: task.target_count == null ? null : 0,
+      recurrence_days: [...task.recurrence_days],
+      recurrence_time: task.recurrence_time,
+      recurrence_start: task.recurrence_start,
+      recurrence_end: task.recurrence_end,
+      recurrence_timezone: task.recurrence_timezone,
+    });
+    setTasks((prev) => [...prev, duplicated]);
+    setGhosts(await fetchGhostPlacements());
   }
 
   async function handleQuickStatus(task: Task, newStatus: TaskStatus) {
@@ -2033,27 +2851,50 @@ export default function CalendarPage() {
     setGhosts(newGhosts);
   }
 
+  async function handleIncrementTask(task: Task) {
+    if (task.target_count == null || task.current_count == null || task.current_count >= task.target_count) return;
+    const updated = await updateTask(task.task_id, { current_count: task.current_count + 1 });
+    setTasks((prev) => prev.map((item) => item.task_id === updated.task_id ? updated : item));
+    setGhosts(await fetchGhostPlacements());
+  }
+
   // ── Masks ────────────────────────────────────────────────────────────────────
 
   async function handleSaveMask(payload: Omit<Mask, "mask_id" | "created_at" | "updated_at">) {
-    const created = await createMask(payload);
-    setMasks((prev) => [...prev, created]);
+    if (editingMask) {
+      const updated = await updateMask(editingMask.mask_id, payload);
+      setMasks((prev) => prev.map((mask) => mask.mask_id === updated.mask_id ? updated : mask));
+    } else {
+      const created = await createMask(payload);
+      setMasks((prev) => [...prev, created]);
+    }
+    setEditingMask(null);
   }
 
   async function handleDeleteMask(maskId: string) {
     await deleteMask(maskId);
     setMasks((prev) => prev.filter((m) => m.mask_id !== maskId));
+    setEditingMask(null);
   }
 
   // ── Derived ─────────────────────────────────────────────────────────────────
 
-  const visibleEvents = events.filter((e) => !hiddenCalendars.has(e.calendar_id));
   const calendarMap = Object.fromEntries(calendars.map((c) => [c.calendar_id, c]));
 
   const viewYear = viewDate.getFullYear();
   const viewMonth = viewDate.getMonth();
   const grid = getMonthGrid(viewYear, viewMonth);
   const weekDays = getWeekDays(viewDate);
+  const displayStart = view === "month" ? grid[0] : view === "week" ? weekDays[0] : viewDate;
+  const displayEnd = view === "month" ? grid[grid.length - 1] : view === "week" ? weekDays[weekDays.length - 1] : viewDate;
+  const visibleEvents = expandRecurringEvents(events, displayStart, displayEnd)
+    .filter((event) => !hiddenCalendars.has(event.calendar_id));
+  const completedTasks = tasks.filter((task) =>
+    task.status === "done"
+    && task.started_at
+    && task.completed_at
+    && (!task.calendar_id || !hiddenCalendars.has(task.calendar_id)),
+  );
 
   function eventsOnDay(day: Date): CalendarEvent[] {
     const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate());
@@ -2080,6 +2921,14 @@ export default function CalendarPage() {
       if (!task) return [];
       return [{ ...g, task }];
     });
+  }
+
+  function completedTasksOnDay(day: Date): Task[] {
+    const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+    const dayEnd = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59, 999);
+    return completedTasks.filter((task) =>
+      new Date(task.started_at!) <= dayEnd && new Date(task.completed_at!) >= dayStart,
+    );
   }
 
   function deadlinesOnDay(day: Date): Task[] {
@@ -2167,9 +3016,14 @@ export default function CalendarPage() {
           <TaskPoolPanel
             tasks={tasks}
             masks={masks}
+            calendars={calendars}
             onNewTask={() => { setEditingTask(null); setShowTaskForm(true); }}
             onEditTask={(t) => { setEditingTask(t); setShowTaskForm(true); }}
             onQuickStatus={handleQuickStatus}
+            onDeleteTask={deleteTaskRecord}
+            onConvertTask={handleConvertTask}
+            onDuplicateTask={handleDuplicateTask}
+            onIncrementTask={handleIncrementTask}
           />
         )}
 
@@ -2177,8 +3031,8 @@ export default function CalendarPage() {
         {sidePanel === "masks" && (
           <MasksPanelContent
             masks={masks}
-            onNewMask={() => setShowMaskForm(true)}
-            onDeleteMask={handleDeleteMask}
+            onNewMask={() => { setEditingMask(null); setShowMaskForm(true); }}
+            onOpenMask={(mask) => { setEditingMask(mask); setShowMaskForm(true); }}
           />
         )}
       </aside>
@@ -2263,7 +3117,25 @@ export default function CalendarPage() {
                 const isToday = isSameDay(day, today);
                 const dayEvents = eventsOnDay(day);
                 const dayGhosts = ghostsOnDay(day);
+                const dayCompletedTasks = completedTasksOnDay(day);
                 const deadlines = deadlinesOnDay(day);
+                const dayItems = [
+                  ...dayEvents.map((event) => ({
+                    kind: "event" as const,
+                    start: event.all_day ? Number.NEGATIVE_INFINITY : new Date(event.start_at).getTime(),
+                    event,
+                  })),
+                  ...dayGhosts.map((ghost) => ({
+                    kind: "ghost" as const,
+                    start: new Date(ghost.suggested_start).getTime(),
+                    ghost,
+                  })),
+                  ...dayCompletedTasks.map((task) => ({
+                    kind: "completed" as const,
+                    start: new Date(task.started_at!).getTime(),
+                    task,
+                  })),
+                ].sort((left, right) => left.start - right.start);
                 return (
                   <div key={i}
                     className={`border-b border-r border-white/5 p-1 flex flex-col min-h-0 cursor-pointer group transition-colors ${
@@ -2292,35 +3164,56 @@ export default function CalendarPage() {
                       </div>
                     ))}
                     <div className="flex flex-col gap-0.5 overflow-hidden flex-1">
-                      {/* Fixed events */}
-                      {dayEvents.slice(0, 2).map((ev) => {
-                        const cal = calendarMap[ev.calendar_id];
+                      {dayItems.slice(0, 3).map((item) => {
+                        if (item.kind === "event") {
+                          const event = item.event;
+                          const calendar = calendarMap[event.calendar_id];
+                          const color = event.color ?? calendar?.color ?? "#64748b";
+                          return (
+                            <button key={event.occurrence_id ?? event.event_id}
+                              onClick={(clickEvent) => { clickEvent.stopPropagation(); detailAnchorRef.current = clickEvent.currentTarget as HTMLElement; setDetailEvent(event); }}
+                              onDoubleClick={(clickEvent) => { clickEvent.stopPropagation(); openEditEvent(event); }}
+                              className="w-full text-left px-1 py-0.5 rounded text-[10px] leading-tight truncate font-medium transition-opacity hover:opacity-80"
+                              style={{ backgroundColor: color + "33", color, borderLeft: `2px ${event.allows_overlap ? "dashed" : "solid"} ${color}` }}>
+                              {event.all_day ? "" : `${formatTime(event.start_at)} `}{event.title}
+                            </button>
+                          );
+                        }
+
+                        if (item.kind === "completed") {
+                          const task = item.task;
+                          const color = task.color ?? (task.calendar_id ? calendarMap[task.calendar_id]?.color : null) ?? "#64748b";
+                          return (
+                            <button key={`completed-${task.task_id}`} type="button"
+                              onClick={(clickEvent) => { clickEvent.stopPropagation(); setEditingTask(task); setShowTaskForm(true); }}
+                              onDoubleClick={(clickEvent) => { clickEvent.stopPropagation(); setEditingTask(task); setShowTaskForm(true); }}
+                              className="flex w-full items-center gap-1 rounded border px-1 py-0.5 text-left text-[10px] font-medium leading-tight"
+                              style={{ color, borderColor: color + "66", backgroundColor: color + "26" }}
+                              title={`Terminée · ${formatTime(task.started_at!)}–${formatTime(task.completed_at!)}`}>
+                              <CheckCircleSolidIcon className="h-3 w-3 shrink-0 text-green-400" />
+                              <span className="shrink-0">{formatTime(task.started_at!)}</span>
+                              <span className="truncate">{task.title}</span>
+                            </button>
+                          );
+                        }
+
+                        const ghost = item.ghost;
+                        const inProgress = ghost.task.status === "in_progress";
+                        const color = ghost.task.color ?? (ghost.task.calendar_id ? calendarMap[ghost.task.calendar_id]?.color : null) ?? "#94a3b8";
                         return (
-                          <button key={ev.event_id}
-                            onClick={(e) => { e.stopPropagation(); detailAnchorRef.current = e.currentTarget as HTMLElement; setDetailEvent(ev); }}
-                            className="w-full text-left px-1 py-0.5 rounded text-[10px] leading-tight truncate font-medium transition-opacity hover:opacity-80"
-                            style={{
-                              backgroundColor: (cal?.color ?? "#64748b") + "33",
-                              color: cal?.color ?? "#94a3b8",
-                              borderLeft: `2px solid ${cal?.color ?? "#64748b"}`,
-                            }}
-                          >
-                            {ev.all_day ? "" : `${formatTime(ev.start_at)} `}{ev.title}
+                          <button key={`${ghost.task_id}-${ghost.suggested_start}`} type="button"
+                            onDoubleClick={(clickEvent) => { clickEvent.stopPropagation(); setEditingTask(ghost.task); setShowTaskForm(true); }}
+                            className={`flex w-full items-center gap-1 rounded border px-1 py-0.5 text-[10px] leading-tight ${inProgress ? "" : "border-dashed"}`}
+                            style={{ color, borderColor: color + "66", backgroundColor: color + (inProgress ? "26" : "0d") }}
+                            title={`${inProgress ? "En cours" : "Suggestion"}: ${ghost.task.title} (${formatTime(ghost.suggested_start)}–${formatTime(ghost.suggested_end)})`}>
+                            {inProgress && <ArrowPathIcon className="h-3 w-3 shrink-0" />}
+                            <span className="truncate">{inProgress ? "" : "~"}{formatTime(ghost.suggested_start)} {ghost.task.title}</span>
                           </button>
                         );
                       })}
-                      {/* Ghost placements */}
-                      {dayGhosts.slice(0, 1).map((g) => (
-                        <div key={g.task_id}
-                          className="w-full px-1 py-0.5 rounded text-[10px] leading-tight truncate border border-dashed border-blue-400/40 text-blue-400/60"
-                          title={`Suggestion: ${g.task.title} (${formatTime(g.suggested_start)}–${formatTime(g.suggested_end)})`}
-                        >
-                          ~{formatTime(g.suggested_start)} {g.task.title}
-                        </div>
-                      ))}
-                      {(dayEvents.length + dayGhosts.length) > 3 && (
+                      {dayItems.length > 3 && (
                         <span className="text-[10px] text-white/30 pl-1">
-                          +{dayEvents.length + dayGhosts.length - 3} autre{dayEvents.length + dayGhosts.length - 3 > 1 ? "s" : ""}
+                          +{dayItems.length - 3} autre{dayItems.length - 3 > 1 ? "s" : ""}
                         </span>
                       )}
                     </div>
@@ -2340,8 +3233,11 @@ export default function CalendarPage() {
             today={today}
             onClickSlot={openNewEvent}
             onClickEvent={handleClickEvent}
+            onEditEvent={openEditEvent}
             ghosts={ghosts}
             tasks={tasks}
+            completedTasks={completedTasks}
+            onClickTask={(task) => { setEditingTask(task); setShowTaskForm(true); }}
             allEvents={events}
           />
         )}
@@ -2385,9 +3281,11 @@ export default function CalendarPage() {
 
       {showMaskForm && (
         <MaskFormModal
+          initial={editingMask ?? undefined}
           onSave={handleSaveMask}
-          onClose={() => setShowMaskForm(false)}
-          allMasks={masks}
+          onDelete={editingMask?.type === "custom" ? () => handleDeleteMask(editingMask.mask_id) : undefined}
+          onClose={() => { setShowMaskForm(false); setEditingMask(null); }}
+          allMasks={masks.filter((mask) => mask.mask_id !== editingMask?.mask_id)}
         />
       )}
 

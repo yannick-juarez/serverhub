@@ -3,7 +3,7 @@
 # ServerHub — Build script
 # Usage : sudo bash build.sh
 #
-# Reinstalls dependencies, runs audit fix, and rebuilds frontend + backend.
+# Installs dependencies when manifests change, then rebuilds frontend + backend.
 # Use this after updating source files (does not touch .env, nginx, or systemd).
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -12,6 +12,7 @@ APP_DIR="/opt/serverhub"
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 SERVICE_NAME="serverhub"
 NODE_MIN_VERSION=22
+BUILD_STATE_DIR="${APP_DIR}/.build-state"
 
 get_node_major_version() {
   if ! command -v node &>/dev/null; then
@@ -19,6 +20,33 @@ get_node_major_version() {
   fi
 
   node -e "process.stdout.write(process.versions.node.split('.')[0])"
+}
+
+dependency_fingerprint() {
+  local package_dir="$1"
+  sha256sum "${package_dir}/package.json" "${package_dir}/package-lock.json" | sha256sum | awk '{print $1}'
+}
+
+ensure_dependencies() {
+  local package_name="$1"
+  local package_dir="$2"
+  local required_binary="$3"
+  local state_file="${BUILD_STATE_DIR}/${package_name}-dependencies.sha256"
+  local current_fingerprint stored_fingerprint=""
+
+  current_fingerprint="$(dependency_fingerprint "$package_dir")"
+  if [[ -f "$state_file" ]]; then
+    stored_fingerprint="$(<"$state_file")"
+  fi
+
+  if [[ ! -x "${package_dir}/node_modules/.bin/${required_binary}" || "$current_fingerprint" != "$stored_fingerprint" ]]; then
+    echo "→ Installing ${package_name} dependencies..."
+    cd "$package_dir"
+    npm ci
+    printf '%s\n' "$current_fingerprint" > "$state_file"
+  else
+    echo "✓ ${package_name^} dependencies unchanged — skipping npm install"
+  fi
 }
 
 # ── Preflight checks ─────────────────────────────────────────────────────────
@@ -79,6 +107,7 @@ sync_sources() {
 }
 
 sync_sources "$SCRIPT_DIR" "$APP_DIR"
+mkdir -p "$BUILD_STATE_DIR"
 
 # ── Build tools (required by better-sqlite3 native addon) ────────────────────
 need_build_tools=0
@@ -100,23 +129,9 @@ else
   echo "✓ Build tools detected (python3 / make / g++)"
 fi
 
-# ── Install dependencies ──────────────────────────────────────────────────────
-echo "→ Installing backend dependencies..."
-cd "$APP_DIR/backend"
-npm install
-
-echo "→ Installing frontend dependencies..."
-cd "$APP_DIR/frontend"
-npm install
-
-# ── Audit fix ────────────────────────────────────────────────────────────────
-echo "→ Running npm audit fix for backend..."
-cd "$APP_DIR/backend"
-npm audit fix || echo "Warning: npm audit fix failed for backend. Continuing."
-
-echo "→ Running npm audit fix for frontend..."
-cd "$APP_DIR/frontend"
-npm audit fix || echo "Warning: npm audit fix failed for frontend. Continuing."
+# ── Install dependencies when manifests change ───────────────────────────────
+ensure_dependencies "backend" "$APP_DIR/backend" "tsc"
+ensure_dependencies "frontend" "$APP_DIR/frontend" "vite"
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 echo "→ Building frontend..."
@@ -126,10 +141,6 @@ npm run build
 echo "→ Building backend..."
 cd "$APP_DIR/backend"
 npm run build
-
-echo "→ Pruning backend development dependencies..."
-cd "$APP_DIR/backend"
-npm prune --omit=dev
 
 # ── Restart service ───────────────────────────────────────────────────────────
 echo "→ Restarting ${SERVICE_NAME}..."

@@ -1,21 +1,24 @@
 // Header.tsx
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo } from 'react';
+import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import HeaderProfile from './Header/HeaderProfile';
 import HeaderWorkspaces from './Header/HeaderWorkspaces';
 import { useLocation } from 'react-router-dom';
 import { apps } from '../apps/index';
-import { FaGlobe } from 'react-icons/fa';
+import { HiOutlineArchiveBox, HiOutlineCheck, HiOutlineChevronDown, HiOutlineExclamationCircle } from 'react-icons/hi2';
+import { AppHeaderContext } from './Header/appHeader';
+import type { MenuConfig } from '../menus/MenuConfig';
 
 const coreSettingsApp = {
   to: '/settings',
   title: 'SETTINGS',
-  menus: [] as Array<{ label: string; items: Array<{ name: string; shortcut?: string; action?: () => void }> }>,
+  menus: [] as MenuConfig[],
 };
 
 const coreApplicationsApp = {
   to: '/applications',
   title: 'APPLICATIONS',
-  menus: [] as Array<{ label: string; items: Array<{ name: string; shortcut?: string; action?: () => void }> }>,
+  menus: [] as MenuConfig[],
 };
 
 const HeaderActionMenu = ({
@@ -23,67 +26,38 @@ const HeaderActionMenu = ({
   items,
 }: {
   label: string;
-  items: Array<{ name: string; shortcut?: string; action?: () => void }>;
+  items: MenuConfig['items'];
 }) => {
-  const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const handlePointerDown = (event: PointerEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-      }
-    };
-
-    window.addEventListener('pointerdown', handlePointerDown);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('pointerdown', handlePointerDown);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, []);
-
   return (
-    <div ref={menuRef} className="relative flex flex-row justify-center items-center">
-      <button
+    <Menu as="div" className="relative flex flex-row justify-center items-center">
+      <MenuButton
         type="button"
         className="uppercase text-xs text-white/80 hover:bg-white/10 px-3 py-1"
-        onClick={() => setOpen((value) => !value)}
       >
         {label}
-      </button>
-      {open ? (
-        <div className="absolute left-0 top-full z-50 mt-1 w-auto origin-top-left rounded-lg border border-white/10 bg-black/20 text-white backdrop-blur-md focus:outline-none">
-          {items.map(({ name, shortcut, action }, index) => (
-            <div key={name} className="flex flex-col">
-              {index > 0 ? <div className="mx-2 h-px bg-white/10" /> : null}
+      </MenuButton>
+        <MenuItems modal={false} className="absolute left-0 top-full z-50 mt-1 min-w-56 rounded-lg border border-white/10 bg-zinc-950/95 p-1 text-white shadow-xl backdrop-blur-md focus:outline-none">
+          {items.map(({ name, shortcut, action, disabled }) => (
+            <MenuItem key={name} disabled={disabled}>
               <button
                 type="button"
-                className="group flex w-full items-center gap-1 px-3 py-1.5 text-xs hover:bg-white/10"
-                onClick={() => {
-                  setOpen(false);
-                  action?.();
-                }}
+                disabled={disabled}
+                className="group flex w-full items-center gap-6 whitespace-nowrap rounded px-3 py-2 text-left text-xs data-[focus]:bg-white/10 disabled:cursor-not-allowed disabled:text-white/30"
+                onClick={action}
               >
                 {name}
                 <kbd className="ml-auto font-sans text-xs text-white/50">{shortcut}</kbd>
               </button>
-            </div>
+            </MenuItem>
           ))}
-        </div>
-      ) : null}
-    </div>
+        </MenuItems>
+    </Menu>
   );
 };
 
 const Header: React.FC<{ opaque?: boolean }> = ({ opaque = true }) => {
   const location = useLocation();
+  const appHeader = useContext(AppHeaderContext);
 
   const currentApp = useMemo(() => {
     return apps.find(app => {
@@ -100,7 +74,7 @@ const Header: React.FC<{ opaque?: boolean }> = ({ opaque = true }) => {
 
   const title = currentApp?.title || 'AI NETWORK OPERATIONS';
   const actionMenus = useMemo(() => {
-    const baseMenus = (currentApp?.menus || []).map((menu) => ({
+    const baseMenus = (appHeader?.menus ?? currentApp?.menus ?? []).map((menu) => ({
       ...menu,
       items: [...menu.items],
     }));
@@ -131,11 +105,30 @@ const Header: React.FC<{ opaque?: boolean }> = ({ opaque = true }) => {
     }
 
     return baseMenus;
-  }, [currentApp]);
+  }, [currentApp, appHeader]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.altKey || event.key.toLowerCase() !== 'n') return;
+      const modified = event.ctrlKey || event.metaKey;
+      if (!modified) {
+        if (event.shiftKey || event.composedPath().some((target) => target instanceof HTMLElement
+          && (target.isContentEditable || target.matches('input, textarea, select, [role="textbox"], [role="combobox"], [role="menu"], [role="menuitem"]')))) return;
+      }
+      const shortcut = modified ? (event.shiftKey ? 'Ctrl+Shift+N' : 'Ctrl+N') : 'N';
+      const item = actionMenus.flatMap((menu) => menu.items).find((item) => item.shortcut === shortcut);
+      if (!item) return;
+      if (!modified && item.disabled) return;
+      event.preventDefault();
+      if (!event.repeat && !item.disabled) item.action?.();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [actionMenus]);
 
   return (
-    <div className="w-full left-0 right-0 z-[999]">
-      <div className={`backdrop-blur-${opaque ? 'lg' : 'sm'} bg-black/${opaque ? '20' : '0'} flex items-center justify-between px-4 ${opaque ? 'border-b' : ''} border-white/10 text-xs z-50 w-full`}>
+    <div className="w-full left-0 right-0 z-40">
+      <div className={`backdrop-blur-${opaque ? 'lg' : 'sm'} bg-black/${opaque ? '20' : '0'} flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 ${appHeader ? 'lg:grid lg:grid-cols-[minmax(max-content,1fr)_minmax(0,auto)_minmax(max-content,1fr)]' : ''} ${opaque ? 'border-b' : ''} border-white/10 text-xs z-50 w-full`}>
         <div className="flex items-center space-x-4 z-50">
           <h1 className="text-xs font-bold text-white uppercase font-sans">{title}</h1>
           <div className="flex flex-row justify-center items-center z-50">
@@ -147,31 +140,37 @@ const Header: React.FC<{ opaque?: boolean }> = ({ opaque = true }) => {
             ))}
           </div>
         </div>
-        <div className="flex items-center space-x-2 z-50 py-1">
-            <div className='flex items-center space-x-1 border-r pr-2 border-white/20'>
-              {/* checkbox green and saved label */}
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-              </svg>
-              <span className="text-gray-300 text-xs font-semibold">Saved</span>
-            </div>
-            <div className='flex flex-row gap-1 items-center justify-center'>
-              <div className='border border-sky-300/30 bg-sky-300/20 p-1 rounded-md'>
-                <FaGlobe className="text-white/80 w-2.5 h-2.5" />
-              </div>
-              <div className='font-semibold text-gray-200 text-xs'>Untitled Sample File*</div>
-            </div>
-            {/* drop down icon */}
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M19 9l-7 7-7-7" />
-            </svg>
-        </div>
-        <div className="flex items-center space-x-2 z-50">
-          <div className='border-r border-gray-500 h-4'></div>
-          <div className="flex flex-row items-center space-x-1 px-2 py-1">
-            <span className="bg-red-600 rounded-full h-2 w-2 mr-1"></span>
-            <span className="text-white text-xs font-semibold">3 Notifications</span>
+        {appHeader && <div className="flex min-w-0 max-w-full items-center justify-center gap-3 justify-self-center py-1">
+          <div role="status" aria-live="polite" aria-atomic="true"
+            className={appHeader.status.text ? `flex min-w-0 items-center gap-1.5 border-r border-white/20 pr-3 ${appHeader.status.tone === 'error' ? 'text-red-300' : appHeader.status.tone === 'success' ? 'text-emerald-300' : 'text-slate-400'}` : 'sr-only'}>
+            {appHeader.status.tone === 'success' && <HiOutlineCheck aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />}
+            {appHeader.status.tone === 'error' && <HiOutlineExclamationCircle aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />}
+            {appHeader.status.tone === 'pending' && <span aria-hidden="true" className="h-3 w-3 shrink-0 animate-spin rounded-full border border-current border-r-transparent" />}
+            <span title={appHeader.status.text} className="max-w-40 truncate text-xs">{appHeader.status.text}</span>
           </div>
+          <Menu as="div" className="relative min-w-0">
+            <MenuButton disabled={appHeader.selection.disabled}
+              aria-label={`${appHeader.selection.label}: ${appHeader.selection.options.find((option) => option.value === appHeader.selection.value)?.label ?? appHeader.selection.placeholder}`}
+              className="flex max-w-60 items-center gap-2 rounded px-2 py-1 text-gray-200 hover:bg-white/10 disabled:opacity-50">
+              <HiOutlineArchiveBox aria-hidden="true" className="h-4 w-4 shrink-0 text-emerald-300" />
+              <span className="truncate font-semibold">{appHeader.selection.options.find((option) => option.value === appHeader.selection.value)?.label ?? appHeader.selection.placeholder}</span>
+              <HiOutlineChevronDown aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+            </MenuButton>
+            <MenuItems modal={false} className="absolute right-0 top-full z-50 mt-1 max-h-80 w-72 max-w-[90vw] overflow-auto rounded-lg border border-white/10 bg-zinc-950/95 p-1 text-white shadow-xl backdrop-blur-md focus:outline-none">
+              {appHeader.selection.options.length ? appHeader.selection.options.map((option) => (
+                <MenuItem key={option.value}>
+                  <button type="button" aria-current={option.value === appHeader.selection.value ? 'true' : undefined}
+                    onClick={() => appHeader.selection.onChange(option.value)}
+                    className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs data-[focus]:bg-white/10">
+                    <span className="min-w-0 flex-1"><span className="block truncate font-semibold">{option.label}</span><span className="mt-1 block text-slate-400">{option.detail}</span></span>
+                    {option.value === appHeader.selection.value && <HiOutlineCheck aria-hidden="true" className="h-4 w-4 shrink-0 text-emerald-300" />}
+                  </button>
+                </MenuItem>
+              )) : <p className="px-3 py-2 text-xs text-slate-400">No contexts yet. Use File → New context.</p>}
+            </MenuItems>
+          </Menu>
+        </div>}
+        <div className="flex items-center justify-self-end space-x-2 z-50">
           <div className='border-r border-gray-500 h-4'></div>
           <HeaderWorkspaces />
           <div className='border-r border-gray-500 h-4'></div>

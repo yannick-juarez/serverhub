@@ -30,6 +30,7 @@ import type {
   StoredTask,
   MaskSlot,
   MaskOperation,
+  MaskDateRange,
 } from './storage.service';
 
 export const STORAGE_DIR = path.resolve(process.cwd(), 'storage');
@@ -208,14 +209,20 @@ function applySchema(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS calendar_events (
       event_id          TEXT PRIMARY KEY NOT NULL,
       calendar_id       TEXT NOT NULL,
+      color             TEXT,
       title             TEXT NOT NULL,
       description       TEXT,
       location          TEXT,
       location_lat      REAL,
       location_lon      REAL,
       all_day           INTEGER NOT NULL DEFAULT 0,
+      allows_overlap    INTEGER NOT NULL DEFAULT 0,
       start_at          TEXT NOT NULL,
       end_at            TEXT NOT NULL,
+      recurrence_days_json TEXT NOT NULL DEFAULT '[]',
+      recurrence_start  TEXT,
+      recurrence_end    TEXT,
+      recurrence_timezone TEXT,
       created_at        TEXT NOT NULL,
       updated_at        TEXT NOT NULL,
       FOREIGN KEY (calendar_id) REFERENCES calendars (calendar_id) ON DELETE CASCADE
@@ -226,6 +233,7 @@ function applySchema(db: Database.Database): void {
       name       TEXT NOT NULL,
       type       TEXT NOT NULL DEFAULT 'custom',
       slots_json TEXT NOT NULL DEFAULT '[]',
+      ranges_json TEXT NOT NULL DEFAULT '[]',
       ops_json   TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -234,6 +242,7 @@ function applySchema(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS calendar_tasks (
       task_id              TEXT PRIMARY KEY NOT NULL,
       calendar_id          TEXT,
+      color                TEXT,
       title                TEXT NOT NULL,
       notes                TEXT,
       location             TEXT,
@@ -241,9 +250,12 @@ function applySchema(db: Database.Database): void {
       location_lon         REAL,
       type                 TEXT NOT NULL DEFAULT 'dynamic',
       status               TEXT NOT NULL DEFAULT 'todo',
+      started_at           TEXT,
+      completed_at         TEXT,
       start_at             TEXT,
       end_at               TEXT,
       all_day              INTEGER NOT NULL DEFAULT 0,
+      allows_overlap       INTEGER NOT NULL DEFAULT 0,
       duration_minutes     INTEGER,
       deadline             TEXT,
       deadline_event_id    TEXT,
@@ -251,6 +263,13 @@ function applySchema(db: Database.Database): void {
       dependencies_json    TEXT NOT NULL DEFAULT '[]',
       dep_event_ids_json   TEXT NOT NULL DEFAULT '[]',
       priority             INTEGER NOT NULL DEFAULT 0,
+      target_count         INTEGER,
+      current_count        INTEGER,
+      recurrence_days_json TEXT NOT NULL DEFAULT '[]',
+      recurrence_time      TEXT,
+      recurrence_start     TEXT,
+      recurrence_end       TEXT,
+      recurrence_timezone  TEXT,
       created_at           TEXT NOT NULL,
       updated_at           TEXT NOT NULL
     );
@@ -262,6 +281,55 @@ function applySchema(db: Database.Database): void {
     .get() as { 1: number } | undefined;
   if (!hasIsAdmin) {
     db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
+  }
+
+  const taskColumns = new Set(
+    (db.prepare("SELECT name FROM pragma_table_info('calendar_tasks')").all() as { name: string }[])
+      .map((column) => column.name),
+  );
+  const recurrenceColumns = [
+    { name: 'color', definition: 'TEXT' },
+    { name: 'allows_overlap', definition: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'started_at', definition: 'TEXT' },
+    { name: 'completed_at', definition: 'TEXT' },
+    { name: 'target_count', definition: 'INTEGER' },
+    { name: 'current_count', definition: 'INTEGER' },
+    { name: 'recurrence_days_json', definition: "TEXT NOT NULL DEFAULT '[]'" },
+    { name: 'recurrence_time', definition: 'TEXT' },
+    { name: 'recurrence_start', definition: 'TEXT' },
+    { name: 'recurrence_end', definition: 'TEXT' },
+    { name: 'recurrence_timezone', definition: 'TEXT' },
+  ];
+  for (const column of recurrenceColumns) {
+    if (!taskColumns.has(column.name)) {
+      db.exec(`ALTER TABLE calendar_tasks ADD COLUMN ${column.name} ${column.definition}`);
+    }
+  }
+
+  const eventColumns = new Set(
+    (db.prepare("SELECT name FROM pragma_table_info('calendar_events')").all() as { name: string }[])
+      .map((column) => column.name),
+  );
+  const eventRecurrenceColumns = [
+    { name: 'color', definition: 'TEXT' },
+    { name: 'allows_overlap', definition: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'recurrence_days_json', definition: "TEXT NOT NULL DEFAULT '[]'" },
+    { name: 'recurrence_start', definition: 'TEXT' },
+    { name: 'recurrence_end', definition: 'TEXT' },
+    { name: 'recurrence_timezone', definition: 'TEXT' },
+  ];
+  for (const column of eventRecurrenceColumns) {
+    if (!eventColumns.has(column.name)) {
+      db.exec(`ALTER TABLE calendar_events ADD COLUMN ${column.name} ${column.definition}`);
+    }
+  }
+
+  const maskColumns = new Set(
+    (db.prepare("SELECT name FROM pragma_table_info('calendar_masks')").all() as { name: string }[])
+      .map((column) => column.name),
+  );
+  if (!maskColumns.has('ranges_json')) {
+    db.exec("ALTER TABLE calendar_masks ADD COLUMN ranges_json TEXT NOT NULL DEFAULT '[]'");
   }
 
   // Migrate calendar_events: add location_lat/lon if missing
@@ -370,31 +438,44 @@ export function readStorageSync(db: Database.Database): StorageData {
   const calendars = db.prepare('SELECT * FROM calendars').all() as StoredCalendar[];
 
   // calendar_events (all_day stored as 0/1)
-  type EventRow = Omit<StoredCalendarEvent, 'all_day'> & { all_day: number };
+  type EventRow = Omit<StoredCalendarEvent, 'all_day' | 'allows_overlap' | 'recurrence_days'> & {
+    all_day: number;
+    allows_overlap: number;
+    recurrence_days_json: string;
+  };
   const events: StoredCalendarEvent[] = (db.prepare('SELECT * FROM calendar_events').all() as EventRow[])
-    .map(r => ({ ...r, all_day: Boolean(r.all_day) }));
+    .map(r => ({
+      ...r,
+      all_day: Boolean(r.all_day),
+      allows_overlap: Boolean(r.allows_overlap),
+      recurrence_days: JSON.parse(r.recurrence_days_json ?? '[]'),
+    }));
 
   // masks
-  type MaskRow = { mask_id: string; name: string; type: string; slots_json: string; ops_json: string; created_at: string; updated_at: string };
+  type MaskRow = { mask_id: string; name: string; type: string; slots_json: string; ranges_json: string; ops_json: string; created_at: string; updated_at: string };
   const masks: StoredMask[] = (db.prepare('SELECT * FROM calendar_masks').all() as MaskRow[]).map(r => ({
     mask_id: r.mask_id,
     name: r.name,
     type: r.type as 'native' | 'custom',
     slots: JSON.parse(r.slots_json) as MaskSlot[],
+    date_ranges: JSON.parse(r.ranges_json ?? '[]') as MaskDateRange[],
     operations: JSON.parse(r.ops_json) as MaskOperation[],
     created_at: r.created_at,
     updated_at: r.updated_at,
   }));
 
   // tasks
-  type TaskRow = Omit<StoredTask, 'all_day' | 'dependencies' | 'dependency_event_ids'> & {
+  type TaskRow = Omit<StoredTask, 'all_day' | 'allows_overlap' | 'dependencies' | 'dependency_event_ids' | 'recurrence_days'> & {
     all_day: number;
+    allows_overlap: number;
     dependencies_json: string;
     dep_event_ids_json: string;
+    recurrence_days_json: string;
   };
   const tasks: StoredTask[] = (db.prepare('SELECT * FROM calendar_tasks').all() as TaskRow[]).map(r => ({
     task_id: r.task_id,
     calendar_id: r.calendar_id,
+    color: r.color,
     title: r.title,
     notes: r.notes,
     location: r.location,
@@ -402,9 +483,12 @@ export function readStorageSync(db: Database.Database): StorageData {
     location_lon: r.location_lon,
     type: r.type as StoredTask['type'],
     status: r.status as StoredTask['status'],
+    started_at: r.started_at,
+    completed_at: r.completed_at,
     start_at: r.start_at,
     end_at: r.end_at,
     all_day: Boolean(r.all_day),
+    allows_overlap: Boolean(r.allows_overlap),
     duration_minutes: r.duration_minutes,
     deadline: r.deadline,
     deadline_event_id: r.deadline_event_id,
@@ -412,6 +496,13 @@ export function readStorageSync(db: Database.Database): StorageData {
     dependencies: JSON.parse(r.dependencies_json ?? '[]'),
     dependency_event_ids: JSON.parse(r.dep_event_ids_json ?? '[]'),
     priority: r.priority,
+    target_count: r.target_count,
+    current_count: r.current_count,
+    recurrence_days: JSON.parse(r.recurrence_days_json ?? '[]'),
+    recurrence_time: r.recurrence_time,
+    recurrence_start: r.recurrence_start,
+    recurrence_end: r.recurrence_end,
+    recurrence_timezone: r.recurrence_timezone,
     created_at: r.created_at,
     updated_at: r.updated_at,
   }));
@@ -584,40 +675,53 @@ export function writeStorageSync(db: Database.Database, data: StorageData): void
     // calendar_events (all_day → 0/1)
     const insEvent = db.prepare(`
       INSERT INTO calendar_events
-        (event_id, calendar_id, title, description, location, location_lat, location_lon, all_day, start_at, end_at, created_at, updated_at)
+        (event_id, calendar_id, color, title, description, location, location_lat, location_lon, all_day, allows_overlap, start_at, end_at,
+         recurrence_days_json, recurrence_start, recurrence_end, recurrence_timezone, created_at, updated_at)
       VALUES
-        (@event_id, @calendar_id, @title, @description, @location, @location_lat, @location_lon, @all_day, @start_at, @end_at, @created_at, @updated_at)
+        (@event_id, @calendar_id, @color, @title, @description, @location, @location_lat, @location_lon, @all_day, @allows_overlap, @start_at, @end_at,
+         @recurrence_days_json, @recurrence_start, @recurrence_end, @recurrence_timezone, @created_at, @updated_at)
     `);
-    for (const e of data.calendar.events) insEvent.run({ ...e, all_day: e.all_day ? 1 : 0 });
+    for (const e of data.calendar.events) {
+      insEvent.run({
+        ...e,
+        all_day: e.all_day ? 1 : 0,
+        allows_overlap: e.allows_overlap ? 1 : 0,
+        recurrence_days_json: JSON.stringify(e.recurrence_days ?? []),
+      });
+    }
 
     // calendar_masks
     db.prepare('DELETE FROM calendar_masks').run();
     const insMask = db.prepare(`
-      INSERT INTO calendar_masks (mask_id, name, type, slots_json, ops_json, created_at, updated_at)
-      VALUES (@mask_id, @name, @type, @slots_json, @ops_json, @created_at, @updated_at)
+      INSERT INTO calendar_masks (mask_id, name, type, slots_json, ranges_json, ops_json, created_at, updated_at)
+      VALUES (@mask_id, @name, @type, @slots_json, @ranges_json, @ops_json, @created_at, @updated_at)
     `);
     for (const m of (data.calendar.masks ?? [])) {
-      insMask.run({ mask_id: m.mask_id, name: m.name, type: m.type, slots_json: JSON.stringify(m.slots), ops_json: JSON.stringify(m.operations), created_at: m.created_at, updated_at: m.updated_at });
+      insMask.run({ mask_id: m.mask_id, name: m.name, type: m.type, slots_json: JSON.stringify(m.slots), ranges_json: JSON.stringify(m.date_ranges ?? []), ops_json: JSON.stringify(m.operations), created_at: m.created_at, updated_at: m.updated_at });
     }
 
     // calendar_tasks
     db.prepare('DELETE FROM calendar_tasks').run();
     const insTask = db.prepare(`
       INSERT INTO calendar_tasks
-        (task_id, calendar_id, title, notes, location, location_lat, location_lon, type, status,
-         start_at, end_at, all_day, duration_minutes, deadline, deadline_event_id, mask_id,
-         dependencies_json, dep_event_ids_json, priority, created_at, updated_at)
+        (task_id, calendar_id, color, title, notes, location, location_lat, location_lon, type, status,
+         started_at, completed_at, start_at, end_at, all_day, allows_overlap, duration_minutes, deadline, deadline_event_id, mask_id,
+         dependencies_json, dep_event_ids_json, priority, target_count, current_count, recurrence_days_json, recurrence_time,
+         recurrence_start, recurrence_end, recurrence_timezone, created_at, updated_at)
       VALUES
-        (@task_id, @calendar_id, @title, @notes, @location, @location_lat, @location_lon, @type, @status,
-         @start_at, @end_at, @all_day, @duration_minutes, @deadline, @deadline_event_id, @mask_id,
-         @dependencies_json, @dep_event_ids_json, @priority, @created_at, @updated_at)
+        (@task_id, @calendar_id, @color, @title, @notes, @location, @location_lat, @location_lon, @type, @status,
+         @started_at, @completed_at, @start_at, @end_at, @all_day, @allows_overlap, @duration_minutes, @deadline, @deadline_event_id, @mask_id,
+         @dependencies_json, @dep_event_ids_json, @priority, @target_count, @current_count, @recurrence_days_json, @recurrence_time,
+         @recurrence_start, @recurrence_end, @recurrence_timezone, @created_at, @updated_at)
     `);
     for (const t of (data.calendar.tasks ?? [])) {
       insTask.run({
         ...t,
         all_day: t.all_day ? 1 : 0,
+        allows_overlap: t.allows_overlap ? 1 : 0,
         dependencies_json: JSON.stringify(t.dependencies ?? []),
         dep_event_ids_json: JSON.stringify(t.dependency_event_ids ?? []),
+        recurrence_days_json: JSON.stringify(t.recurrence_days ?? []),
       });
     }
   });

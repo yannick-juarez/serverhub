@@ -68,16 +68,22 @@ export async function handleListEvents(_req: Request, res: Response): Promise<vo
 }
 
 export async function handleCreateEvent(req: Request, res: Response): Promise<void> {
-  const { calendar_id, title, description, location, location_lat, location_lon, all_day, start_at, end_at } = req.body as {
+  const { calendar_id, color, title, description, location, location_lat, location_lon, all_day, allows_overlap, start_at, end_at, recurrence_days, recurrence_start, recurrence_end, recurrence_timezone } = req.body as {
     calendar_id?: string;
+    color?: string | null;
     title?: string;
     description?: string;
     location?: string;
     location_lat?: number;
     location_lon?: number;
     all_day?: boolean;
+    allows_overlap?: boolean;
     start_at?: string;
     end_at?: string;
+    recurrence_days?: number[];
+    recurrence_start?: string | null;
+    recurrence_end?: string | null;
+    recurrence_timezone?: string | null;
   };
 
   if (!calendar_id || !title || !start_at || !end_at) {
@@ -87,14 +93,22 @@ export async function handleCreateEvent(req: Request, res: Response): Promise<vo
 
   const created = await createEvent({
     calendar_id,
+    color: color ?? null,
     title,
     description: description ?? null,
     location: location ?? null,
     location_lat: location_lat ?? null,
     location_lon: location_lon ?? null,
     all_day: all_day ?? false,
+    allows_overlap: allows_overlap ?? false,
     start_at,
     end_at,
+    recurrence_days: Array.isArray(recurrence_days)
+      ? recurrence_days.filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+      : [],
+    recurrence_start: recurrence_start ?? null,
+    recurrence_end: recurrence_end ?? null,
+    recurrence_timezone: recurrence_timezone ?? null,
   });
 
   res.status(201).json({ success: true, data: created });
@@ -102,19 +116,30 @@ export async function handleCreateEvent(req: Request, res: Response): Promise<vo
 
 export async function handleUpdateEvent(req: Request, res: Response): Promise<void> {
   const { eventId } = req.params;
-  const { calendar_id, title, description, location, location_lat, location_lon, all_day, start_at, end_at } = req.body as {
+  const { calendar_id, color, title, description, location, location_lat, location_lon, all_day, allows_overlap, start_at, end_at } = req.body as {
     calendar_id?: string;
+    color?: string | null;
     title?: string;
     description?: string | null;
     location?: string | null;
     location_lat?: number | null;
     location_lon?: number | null;
     all_day?: boolean;
+    allows_overlap?: boolean;
     start_at?: string;
     end_at?: string;
   };
 
-  const updated = await updateEvent(eventId, { calendar_id, title, description, location, location_lat, location_lon, all_day, start_at, end_at });
+  const { recurrence_days, recurrence_start, recurrence_end, recurrence_timezone } = req.body as {
+    recurrence_days?: number[];
+    recurrence_start?: string | null;
+    recurrence_end?: string | null;
+    recurrence_timezone?: string | null;
+  };
+  const updated = await updateEvent(eventId, {
+    calendar_id, color, title, description, location, location_lat, location_lon, all_day, allows_overlap, start_at, end_at,
+    recurrence_days, recurrence_start, recurrence_end, recurrence_timezone,
+  });
   res.json({ success: true, data: updated });
 }
 
@@ -142,6 +167,7 @@ export async function handleCreateTask(req: Request, res: Response): Promise<voi
 
   const created = await createTask({
     calendar_id: (body.calendar_id as string) ?? null,
+    color: (body.color as string) ?? null,
     title: title as string,
     notes: (body.notes as string) ?? null,
     location: (body.location as string) ?? null,
@@ -149,9 +175,12 @@ export async function handleCreateTask(req: Request, res: Response): Promise<voi
     location_lon: (body.location_lon as number) ?? null,
     type: 'dynamic',
     status: (body.status as 'todo' | 'in_progress' | 'done' | 'failed') ?? 'todo',
+    started_at: null,
+    completed_at: null,
     start_at: (body.start_at as string) ?? null,
     end_at: (body.end_at as string) ?? null,
     all_day: (body.all_day as boolean) ?? false,
+    allows_overlap: (body.allows_overlap as boolean) ?? false,
     duration_minutes: (body.duration_minutes as number) ?? null,
     deadline: (body.deadline as string) ?? null,
     deadline_event_id: (body.deadline_event_id as string) ?? null,
@@ -159,6 +188,19 @@ export async function handleCreateTask(req: Request, res: Response): Promise<voi
     dependencies: (body.dependencies as string[]) ?? [],
     dependency_event_ids: (body.dependency_event_ids as string[]) ?? [],
     priority: (body.priority as number) ?? 0,
+    target_count: typeof body.target_count === 'number' && body.target_count > 0
+      ? Math.floor(body.target_count)
+      : null,
+    current_count: typeof body.target_count === 'number' && body.target_count > 0
+      ? Math.max(0, Math.min(Math.floor(body.current_count as number) || 0, Math.floor(body.target_count)))
+      : null,
+    recurrence_days: Array.isArray(body.recurrence_days)
+      ? (body.recurrence_days as number[]).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+      : [],
+    recurrence_time: (body.recurrence_time as string) ?? null,
+    recurrence_start: (body.recurrence_start as string) ?? null,
+    recurrence_end: (body.recurrence_end as string) ?? null,
+    recurrence_timezone: (body.recurrence_timezone as string) ?? null,
   });
 
   res.status(201).json({ success: true, data: created });
@@ -176,8 +218,9 @@ export async function handleDeleteTask(req: Request, res: Response): Promise<voi
   res.json({ success: true, message: 'Task deleted' });
 }
 
-export async function handleGetGhostPlacements(_req: Request, res: Response): Promise<void> {
-  const data = await computeGhostPlacements();
+export async function handleGetGhostPlacements(req: Request, res: Response): Promise<void> {
+  const timezone = typeof req.query.timezone === 'string' ? req.query.timezone : 'UTC';
+  const data = await computeGhostPlacements(timezone);
   res.json({ success: true, data });
 }
 
@@ -189,7 +232,7 @@ export async function handleListMasks(_req: Request, res: Response): Promise<voi
 }
 
 export async function handleCreateMask(req: Request, res: Response): Promise<void> {
-  const { name, type, slots, operations } = req.body as Record<string, unknown>;
+  const { name, type, slots, date_ranges, operations } = req.body as Record<string, unknown>;
   if (!name || !type) {
     res.status(400).json({ success: false, error: 'Missing required fields: name, type' });
     return;
@@ -198,6 +241,7 @@ export async function handleCreateMask(req: Request, res: Response): Promise<voi
     name: name as string,
     type: type as 'native' | 'custom',
     slots: (slots as Parameters<typeof createMask>[0]['slots']) ?? [],
+    date_ranges: (date_ranges as Parameters<typeof createMask>[0]['date_ranges']) ?? [],
     operations: (operations as Parameters<typeof createMask>[0]['operations']) ?? [],
   });
   res.status(201).json({ success: true, data: created });

@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import Cookies from "js-cookie";
 import { useNavigate } from "react-router-dom";
+import { HiOutlineEye, HiOutlineEyeSlash } from "react-icons/hi2";
 import "leaflet/dist/leaflet.css";
 import Input from "../components/Input";
 import useDocumentTitle from "../hooks/useDocumentTitle";
@@ -15,6 +16,7 @@ const Login = () => {
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [error, setError] = useState("");
 
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -131,14 +133,30 @@ const Login = () => {
               onChange={e => setUsername(e.target.value)}
               onKeyDown={handleLoginKeyDown}
             />
-            <Input
-              type="password"
-              placeholder="Password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              onKeyDown={handlePasswordKeyDown}
-              ref={passwordRef}
-            />
+            <div className="relative [&>input]:pr-10">
+              <Input
+                type={isPasswordVisible ? "text" : "password"}
+                placeholder="Password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                onKeyDown={handlePasswordKeyDown}
+                ref={passwordRef}
+              />
+              <button
+                type="button"
+                className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-white/60 transition hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/30"
+                onClick={() => setIsPasswordVisible(visible => !visible)}
+                aria-label={isPasswordVisible ? "Hide password" : "Show password"}
+                aria-pressed={isPasswordVisible}
+                title={isPasswordVisible ? "Hide password" : "Show password"}
+              >
+                {isPasswordVisible ? (
+                  <HiOutlineEyeSlash aria-hidden="true" size={17} />
+                ) : (
+                  <HiOutlineEye aria-hidden="true" size={17} />
+                )}
+              </button>
+            </div>
             <div className="w-full border-b border-white/20"></div>
             <button
               className="w-full px-3 py-2 rounded-md bg-white/90 text-black hover:bg-white transition backdrop-blur-md text-xs font-bold"

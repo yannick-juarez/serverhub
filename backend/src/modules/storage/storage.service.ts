@@ -142,14 +142,20 @@ export type StoredCalendar = {
 export type StoredCalendarEvent = {
   event_id: string;
   calendar_id: string;
+  color: string | null;
   title: string;
   description: string | null;
   location: string | null;
   location_lat: number | null;
   location_lon: number | null;
   all_day: boolean;
+  allows_overlap: boolean;
   start_at: string;
   end_at: string;
+  recurrence_days: number[];
+  recurrence_start: string | null;
+  recurrence_end: string | null;
+  recurrence_timezone: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -169,12 +175,20 @@ export type MaskOperation = {
   mask_id: string;
 };
 
+export type MaskDateRange = {
+  start_date: string;
+  end_date: string;
+  start: string;
+  end: string;
+};
+
 export type StoredMask = {
   mask_id: string;
   name: string;
   /** 'native' = built-in preset, 'custom' = user-defined */
   type: 'native' | 'custom';
   slots: MaskSlot[];
+  date_ranges?: MaskDateRange[];
   /** Optional set operations composing this mask from other masks */
   operations: MaskOperation[];
   created_at: string;
@@ -187,6 +201,7 @@ export type TaskType = 'fixed' | 'dynamic';
 export type StoredTask = {
   task_id: string;
   calendar_id: string | null;
+  color: string | null;
   title: string;
   notes: string | null;
   location: string | null;
@@ -194,11 +209,14 @@ export type StoredTask = {
   location_lon: number | null;
   type: TaskType;
   status: TaskStatus;
+  started_at: string | null;
+  completed_at: string | null;
 
   // Fixed-event fields (used when type === 'fixed')
   start_at: string | null;
   end_at: string | null;
   all_day: boolean;
+  allows_overlap: boolean;
 
   // Dynamic-task fields (used when type === 'dynamic')
   duration_minutes: number | null;
@@ -208,6 +226,13 @@ export type StoredTask = {
   dependencies: string[];               // task_ids that must be 'done' first
   dependency_event_ids: string[];       // event_ids that must have started/passed first
   priority: number;                     // 0 = normal, higher = more urgent
+  target_count: number | null;           // null = no numeric goal
+  current_count: number | null;          // progress toward target_count
+  recurrence_days: number[];            // 0 = Sunday … 6 = Saturday; empty = one-off task
+  recurrence_time: string | null;       // local time, "HH:MM"
+  recurrence_start: string | null;      // local date, "YYYY-MM-DD"
+  recurrence_end: string | null;        // local date, "YYYY-MM-DD"
+  recurrence_timezone: string | null;   // IANA timezone, e.g. "Europe/Paris"
 
   created_at: string;
   updated_at: string;

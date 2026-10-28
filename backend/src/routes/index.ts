@@ -14,6 +14,7 @@ import { messagesRouter } from '../modules/messages/messages.routes';
 import { calendarRouter } from '../modules/calendar/calendar.routes';
 import { updatesRouter } from '../modules/updates/updates.routes';
 import { systemRouter } from '../modules/system/system.routes';
+import { inventaryRouter } from '../modules/inventary/inventary.routes';
 
 const router = Router();
 
@@ -32,5 +33,6 @@ router.use('/messages', messagesRouter);
 router.use('/calendar', calendarRouter);
 router.use('/updates', updatesRouter);
 router.use('/system', systemRouter);
+router.use('/inventary', inventaryRouter);
 
 export { router };

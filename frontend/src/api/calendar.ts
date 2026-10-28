@@ -12,14 +12,21 @@ export type Calendar = {
 export type CalendarEvent = {
   event_id: string;
   calendar_id: string;
+  color: string | null;
   title: string;
   description: string | null;
   location: string | null;
   location_lat: number | null;
   location_lon: number | null;
   all_day: boolean;
+  allows_overlap: boolean;
   start_at: string;
   end_at: string;
+  recurrence_days: number[];
+  recurrence_start: string | null;
+  recurrence_end: string | null;
+  recurrence_timezone: string | null;
+  occurrence_id?: string;
   created_at: string;
   updated_at: string;
 };
@@ -76,14 +83,20 @@ export async function fetchEvents(): Promise<CalendarEvent[]> {
 
 export async function createEvent(payload: {
   calendar_id: string;
+  color?: string | null;
   title: string;
   description?: string;
   location?: string;
   location_lat?: number | null;
   location_lon?: number | null;
   all_day: boolean;
+  allows_overlap: boolean;
   start_at: string;
   end_at: string;
+  recurrence_days: number[];
+  recurrence_start: string | null;
+  recurrence_end: string | null;
+  recurrence_timezone: string | null;
 }): Promise<CalendarEvent> {
   const raw = await apiRequest<Envelope<CalendarEvent>>("/calendar/events", {
     method: "POST",
@@ -96,14 +109,20 @@ export async function updateEvent(
   eventId: string,
   patch: Partial<{
     calendar_id: string;
+    color: string | null;
     title: string;
     description: string | null;
     location: string | null;
     location_lat: number | null;
     location_lon: number | null;
     all_day: boolean;
+    allows_overlap: boolean;
     start_at: string;
     end_at: string;
+    recurrence_days: number[];
+    recurrence_start: string | null;
+    recurrence_end: string | null;
+    recurrence_timezone: string | null;
   }>,
 ): Promise<CalendarEvent> {
   const raw = await apiRequest<Envelope<CalendarEvent>>(`/calendar/events/${eventId}`, {
@@ -125,6 +144,7 @@ export type TaskType = 'fixed' | 'dynamic';
 export type Task = {
   task_id: string;
   calendar_id: string | null;
+  color: string | null;
   title: string;
   notes: string | null;
   location: string | null;
@@ -132,10 +152,13 @@ export type Task = {
   location_lon: number | null;
   type: TaskType;
   status: TaskStatus;
+  started_at: string | null;
+  completed_at: string | null;
   // Fixed
   start_at: string | null;
   end_at: string | null;
   all_day: boolean;
+  allows_overlap: boolean;
   // Dynamic
   duration_minutes: number | null;
   deadline: string | null;
@@ -144,6 +167,13 @@ export type Task = {
   dependencies: string[];
   dependency_event_ids: string[];
   priority: number;
+  target_count: number | null;
+  current_count: number | null;
+  recurrence_days: number[];
+  recurrence_time: string | null;
+  recurrence_start: string | null;
+  recurrence_end: string | null;
+  recurrence_timezone: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -161,7 +191,8 @@ export async function fetchTasks(): Promise<Task[]> {
 }
 
 export async function fetchGhostPlacements(): Promise<GhostPlacement[]> {
-  const raw = await apiRequest<Envelope<GhostPlacement[]>>("/calendar/tasks/ghost-placements");
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const raw = await apiRequest<Envelope<GhostPlacement[]>>(`/calendar/tasks/ghost-placements?timezone=${encodeURIComponent(timezone)}`);
   const data = unwrap<GhostPlacement[]>(raw);
   return Array.isArray(data) ? data : [];
 }
@@ -183,6 +214,7 @@ export async function deleteTask(taskId: string): Promise<void> {
 // ─── Masks ────────────────────────────────────────────────────────────────────
 
 export type MaskSlot = { day: number; start: string; end: string };
+export type MaskDateRange = { start_date: string; end_date: string; start: string; end: string };
 export type MaskOperation = { op: 'add' | 'subtract'; mask_id: string };
 
 export type Mask = {
@@ -190,6 +222,7 @@ export type Mask = {
   name: string;
   type: 'native' | 'custom';
   slots: MaskSlot[];
+  date_ranges: MaskDateRange[];
   operations: MaskOperation[];
   created_at: string;
   updated_at: string;

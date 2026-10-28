@@ -6,6 +6,7 @@ import { ReactNode, useEffect, useMemo, useState } from "react";
 import Header from "./Header";
 import SideDock from "./SideDock";
 import Footer from "./Footer";
+import AppHeaderProvider from "./Header/AppHeaderProvider";
 
 import { getStoredWorkspaceSettings, WORKSPACE_SETTINGS_UPDATED_EVENT, type WorkspaceSettings } from "../data/workspaces";
 
@@ -43,7 +44,7 @@ const ProtectedRoute = ({ children, opaque = true }: { children: ReactNode, opaq
     return <Navigate to="/login" />;
   }
 
-  return <div className="h-screen w-screen">
+  return <AppHeaderProvider><div className="h-screen w-screen">
     <div className="flex flex-col gap-0 h-full w-screen">
       { selectedBanner &&
         <div className={`w-full ${selectedBanner.background} z-50 text-xs text-center fixed ${selectedBanner.foreground}`}>
@@ -64,7 +65,7 @@ const ProtectedRoute = ({ children, opaque = true }: { children: ReactNode, opaq
         </div>
       </div>
     </div>
-  </div>;
+  </div></AppHeaderProvider>;
 }
 
 export default ProtectedRoute;
