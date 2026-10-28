@@ -11,7 +11,6 @@ import Input from '../../components/Input';
 import useDocumentTitle from '../../hooks/useDocumentTitle';
 import Badge from '../../ui/Badge';
 import Button from '../../ui/Button';
-import { Title } from '../../ui/Typography';
 import { ContextEditor, EntryEditor, Modal } from './editors';
 import { kindLabels, selectClass, usageLabels } from './labels';
 import { useAppHeader } from '../../components/Header/appHeader';
@@ -210,7 +209,6 @@ export default function InventaryPage() {
     && (!normalizedQuery || [entry.name, entry.label, entry.description, entry.sku, entry.barcode, path(entry.parentId)]
       .some((value) => value.toLocaleLowerCase('en').includes(normalizedQuery))))
     .sort((a, b) => Number(b.kind === 'container') - Number(a.kind === 'container') || a.name.localeCompare(b.name, 'en', { numeric: true }));
-  const containers = entries.filter((entry) => entry.kind === 'container').length;
   const lowCount = entries.filter(isLow).length;
   const disabled = loading || busy;
   const headerDisabled = disabled || Boolean(editor || removal);
@@ -230,6 +228,8 @@ export default function InventaryPage() {
           action: () => { if (selected) openEditor({ type: 'entry', entry: selected, kind: selected.kind }); } },
         { name: 'Context settings', disabled: headerDisabled || !current || !owned,
           action: () => { if (current && owned) openEditor({ type: 'context', context: current }); } },
+        { name: 'Delete context', disabled: headerDisabled || !current || !owned,
+          action: () => { if (current && owned) openRemoval({ type: 'context', context: current }); } },
       ] },
     ],
     status: {
@@ -258,8 +258,24 @@ export default function InventaryPage() {
       </div>
       <main className="relative mx-auto max-w-[1600px] px-5 py-3 lg:px-8 lg:py-4">
         <header className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-3">
-          <Title>Inventary</Title>
-          <div className="flex gap-2">
+          {current ? (
+            <nav aria-label="Breadcrumb" className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
+              <button disabled={disabled} className="break-words text-emerald-200 hover:underline disabled:opacity-50" onClick={() => navigate(null)}>{current.name}</button>
+              {ancestors(parentId).map((entry) => <span key={entry.id} className="inline-flex min-w-0 items-center gap-2">
+                <HiOutlineChevronRight className="h-3 w-3 shrink-0 text-slate-600" />
+                <button disabled={disabled} className="inline-flex min-w-0 items-center gap-1.5 text-slate-300 hover:text-white disabled:opacity-50"
+                  aria-current={entry.id === parentId ? 'location' : undefined} onClick={() => navigate(entry.id)}>
+                  <EntryIcon entry={entry} className="h-4 w-4 shrink-0 text-emerald-300" /><span className="break-words">{entry.name}</span>
+                </button>
+              </span>)}
+            </nav>
+          ) : <span className="text-xs text-slate-400">No context selected</span>}
+          <div className="flex flex-wrap items-center gap-2">
+            {current && <>
+              {currentContainer && <Button variant="secondary" disabled={disabled} onClick={() => openEditor({ type: 'entry', entry: currentContainer, kind: currentContainer.kind })}>Edit container</Button>}
+              <Button variant="secondary" disabled={disabled} onClick={() => openEditor({ type: 'entry', kind: 'container' })}><HiOutlineFolder className="h-4 w-4" /> Container</Button>
+              <Button disabled={disabled} onClick={() => openEditor({ type: 'entry', kind: 'item' })}><HiOutlinePlus className="h-4 w-4" /> Add entry</Button>
+            </>}
             <Button variant="secondary" disabled={disabled} onClick={() => void reload(contextId)} aria-label="Refresh">
               <HiOutlineArrowPath className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </Button>
@@ -304,46 +320,7 @@ export default function InventaryPage() {
               </div>
             ) : (
               <div className={loading ? 'pointer-events-none opacity-50' : ''}>
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-                    <h2 className="break-words text-xl font-semibold">{current.name}</h2>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge tone={current.visibility === 'private' ? 'neutral' : 'success'}>{current.visibility === 'private' ? 'Private' : 'Shared'}</Badge>
-                      <span className="text-xs text-slate-400">{usageLabels[current.usage]} · Created by {current.owner}</span>
-                    </div>
-                  </div>
-                  {owned && <div className="flex gap-2">
-                    <Button variant="destructive" disabled={disabled} aria-label="Delete context" onClick={() => openRemoval({ type: 'context', context: current })}><HiOutlineTrash className="h-4 w-4" /></Button>
-                  </div>}
-                </div>
-                <div className="mb-5 grid grid-cols-3 gap-3">
-                  {[[containers, 'Containers'], [entries.length - containers, 'Records'], [lowCount, 'Low stock']].map(([value, label]) => (
-                    <div key={label} className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
-                      <p className={`text-2xl font-semibold ${label === 'Low stock' && lowCount ? 'text-amber-200' : 'text-white'}`}>{value}</p>
-                      <p className="mt-1 text-xs text-slate-400">{label}</p>
-                    </div>
-                  ))}
-                </div>
                 <div className="rounded-xl border border-white/10 bg-white/[0.02]">
-                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 p-4">
-                    <nav aria-label="Breadcrumb" className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
-                      <button className="text-emerald-200 hover:underline" onClick={() => navigate(null)}>{current.name}</button>
-                      {ancestors(parentId).map((entry) => <span key={entry.id} className="inline-flex items-center gap-2">
-                        <HiOutlineChevronRight className="h-3 w-3 text-slate-600" />
-                        <button className="inline-flex items-center gap-1.5 text-slate-300 hover:text-white" onClick={() => navigate(entry.id)}>
-                          <EntryIcon entry={entry} className="h-4 w-4 shrink-0 text-emerald-300" />{entry.name}
-                        </button>
-                      </span>)}
-                    </nav>
-                    <div className="flex flex-wrap gap-2">
-                      {parentId && <Button variant="secondary" disabled={disabled} onClick={() => {
-                        const entry = entryMap.get(parentId);
-                        if (entry) openEditor({ type: 'entry', entry, kind: entry.kind });
-                      }}>Edit container</Button>}
-                      <Button variant="secondary" disabled={disabled} onClick={() => openEditor({ type: 'entry', kind: 'container' })}><HiOutlineFolder className="h-4 w-4" /> Container</Button>
-                      <Button disabled={disabled} onClick={() => openEditor({ type: 'entry', kind: 'item' })}><HiOutlinePlus className="h-4 w-4" /> Add entry</Button>
-                    </div>
-                  </div>
                   <div className="flex flex-wrap items-center gap-3 border-b border-white/10 p-4">
                     <label className="relative min-w-[180px] flex-1">
                       <span className="sr-only">Search this context</span>

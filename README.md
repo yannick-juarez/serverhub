@@ -172,9 +172,13 @@ Their category and notes are free text; documents are catalog records, not file 
   and **New item / document** (`N`). Use `Cmd` instead of `Ctrl` on macOS.
   The single-key shortcut is ignored while typing in fields, editable content,
   or navigating menus. New entries are placed in the open container.
-- **Edit** offers **Edit container**, **Edit selected item** and **Context settings**.
+- The compact app toolbar contains breadcrumbs, **Edit container** (when inside a
+  container), **Container**, **Add entry**, and **Refresh**. Statistics and duplicate
+  context metadata are omitted; search and the low-stock filter remain available.
+- **Edit** offers **Edit container**, **Edit selected item**, **Context settings**
+  and **Delete context** (with confirmation).
   Actions are disabled when there is no applicable selection, while loading/saving,
-  or while a dialog is open. Context settings are restricted to the owner.
+  or while a dialog is open. Context settings and deletion are restricted to the owner.
 - The header reports actual loading, editing, saving, success and error states;
   success is only reported after the API confirms a mutation. Context switching
   and shortcuts are scoped to Inventary and blocked while a dialog is open.
