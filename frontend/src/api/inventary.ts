@@ -2,6 +2,7 @@ import { apiRequest } from './http';
 
 export type ContextUsage = 'personal' | 'business' | 'archives' | 'library';
 export type EntryKind = 'container' | 'item' | 'document';
+export type ContainerType = 'folder' | 'box' | 'home' | 'building' | 'room' | 'shelf';
 export interface InventoryContext {
   id: string;
   name: string;
@@ -15,6 +16,7 @@ export interface InventoryEntry {
   contextId: string;
   parentId: string | null;
   kind: EntryKind;
+  containerType: ContainerType | null;
   name: string;
   label: string;
   description: string;

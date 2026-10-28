@@ -4,6 +4,8 @@ import Input from '../../components/Input';
 import Button from '../../ui/Button';
 import type { ContextInput, EntryInput, InventoryContext, InventoryEntry } from '../../api/inventary';
 import { kindLabels, selectClass, usageLabels } from './labels';
+import { containerTypes } from './containerTypes';
+import EntryIcon from './EntryIcon';
 
 export function Modal({ title, children, onClose, busy, error }: {
   title: string; children: ReactNode; onClose: () => void; busy: boolean; error: string;
@@ -42,7 +44,7 @@ export function ContextEditor({ context, busy, error, onClose, onSave }: {
       <form onSubmit={submit} className="space-y-5">
         <fieldset disabled={busy} className="space-y-5">
           <Field label="Context name">
-            <Input autoFocus required maxLength={200} value={form.name} placeholder="Home, city archives, shop..."
+            <Input autoFocus required maxLength={200} value={form.name} placeholder="Context name"
               onChange={(event) => setForm({ ...form, name: event.target.value })} />
           </Field>
           <Field label="Usage">
@@ -84,7 +86,7 @@ export function EntryEditor({ entry, parentId, initialKind, entries, path, busy,
 }) {
   const [form, setForm] = useState<EntryInput>(entry ?? {
     parentId, kind: initialKind, name: '', label: '', description: '', quantity: initialKind === 'container' ? 0 : 1,
-    minQuantity: 0, unit: 'unit', sku: '', barcode: '',
+    minQuantity: 0, unit: 'unit', sku: '', barcode: '', containerType: initialKind === 'container' ? 'folder' : null,
   });
   const excluded = new Set<string>();
   if (entry) {
@@ -96,11 +98,13 @@ export function EntryEditor({ entry, parentId, initialKind, entries, path, busy,
     }
   }
   const parents = entries.filter((item) => item.kind === 'container' && !excluded.has(item.id));
+  const selectedParent = parents.find((item) => item.id === form.parentId);
   const hasChildren = entry && entries.some((item) => item.parentId === entry.id);
   function submit(event: FormEvent) {
     event.preventDefault();
     onSave({
       parentId: form.parentId, kind: form.kind, name: form.name.trim(), label: form.label.trim(),
+      containerType: form.kind === 'container' ? form.containerType ?? 'folder' : null,
       description: form.description.trim(), quantity: form.kind === 'container' ? 0 : form.quantity,
       minQuantity: form.kind === 'container' ? 0 : form.minQuantity, unit: form.unit.trim(),
       sku: form.kind === 'container' ? '' : form.sku.trim(), barcode: form.kind === 'container' ? '' : form.barcode.trim(),
@@ -114,25 +118,50 @@ export function EntryEditor({ entry, parentId, initialKind, entries, path, busy,
             <Field label="Type">
               <select className={selectClass} value={form.kind} disabled={Boolean(hasChildren)} onChange={(event) => {
                 const kind = event.target.value;
-                if (kind === 'container' || kind === 'item' || kind === 'document') setForm({ ...form, kind });
+                if (kind === 'container' || kind === 'item' || kind === 'document') {
+                  setForm({ ...form, kind, containerType: kind === 'container' ? form.containerType ?? 'folder' : null });
+                }
               }}>
                 {Object.entries(kindLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
             </Field>
             <Field label="Category (free text)">
-              <Input maxLength={100} value={form.label} placeholder="City, attic, box, book..."
+              <Input maxLength={100} value={form.label} placeholder="Container, object, document"
                 onChange={(event) => setForm({ ...form, label: event.target.value })} />
             </Field>
           </div>
+          {form.kind === 'container' && (
+            <fieldset className="space-y-2">
+              <legend className="mb-2 text-xs text-slate-300">Container type</legend>
+              <div className="grid grid-cols-3 gap-2">
+                {Object.entries(containerTypes).map(([value, definition]) => (
+                  <label key={value} className={`flex cursor-pointer items-center gap-2 rounded-lg border p-3 text-xs ${form.containerType === value ? 'border-emerald-300/50 bg-emerald-500/10 text-emerald-200' : 'border-white/10 text-slate-300 hover:bg-white/5'}`}>
+                    <input type="radio" name="containerType" value={value} checked={form.containerType === value}
+                      className="accent-emerald-500" onChange={() => {
+                        if (value === 'folder' || value === 'box' || value === 'home' || value === 'building' || value === 'room' || value === 'shelf') {
+                          setForm({ ...form, containerType: value });
+                        }
+                      }} />
+                    <definition.icon aria-hidden="true" className="h-4 w-4 shrink-0" />
+                    {definition.label}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
           <Field label="Name">
-            <Input autoFocus required maxLength={200} value={form.name} placeholder="Winter box 2, blue sweater..."
+            <Input autoFocus required maxLength={200} value={form.name} placeholder={form.kind === 'container' ? 'Container name' : form.kind === 'document' ? 'Document name' : 'Object name'}
               onChange={(event) => setForm({ ...form, name: event.target.value })} />
           </Field>
           <Field label="Store in">
             <select className={selectClass} value={form.parentId ?? ''} onChange={(event) => setForm({ ...form, parentId: event.target.value || null })}>
               <option value="">Context root</option>
-              {parents.map((item) => <option key={item.id} value={item.id}>{path(item.id)}</option>)}
+              {parents.map((item) => <option key={item.id} value={item.id}>{containerTypes[item.containerType ?? 'folder'].label} · {path(item.id)}</option>)}
             </select>
+            {selectedParent && <span className="flex items-center gap-2 text-slate-400">
+              <EntryIcon entry={selectedParent} className="h-4 w-4" />
+              {selectedParent.name}
+            </span>}
           </Field>
           <Field label="Description / notes">
             <textarea className={`${selectClass} min-h-20`} maxLength={5000} value={form.description}
@@ -154,7 +183,7 @@ export function EntryEditor({ entry, parentId, initialKind, entries, path, busy,
                     onChange={(event) => setForm({ ...form, quantity: event.target.valueAsNumber })} />
                 </Field>
                 <Field label="Unit">
-                  <Input required maxLength={40} value={form.unit} placeholder="unit, kg, box..."
+                  <Input required maxLength={40} value={form.unit} placeholder="Unit of measure"
                     onChange={(event) => setForm({ ...form, unit: event.target.value })} />
                 </Field>
                 <Field label="Low-stock threshold">

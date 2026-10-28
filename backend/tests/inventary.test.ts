@@ -72,6 +72,7 @@ const entriesPath = (id: string): string => `/contexts/${id}/entries`;
 function input(name: string, overrides: Partial<EntryInput> = {}): EntryInput {
   return {
     name, kind: 'container', parentId: null, label: '', description: '',
+    containerType: overrides.kind && overrides.kind !== 'container' ? null : 'folder',
     quantity: 0, unit: 'unité', minQuantity: 0, sku: '', barcode: '', ...overrides,
   };
 }
@@ -189,4 +190,48 @@ test('persists contexts, hierarchy and stock when reopening the database', async
   assert.equal(records.find((item) => item.id === book.id)?.parentId, box.id);
   await request('Alice', `${entriesPath(home.id)}/${book.id}`, 'DELETE');
   await request('Alice', `${entriesPath(home.id)}/${box.id}`, 'DELETE');
+});
+
+test('persists all container types and validates create/update without changing hierarchy', async () => {
+  const home = await context();
+  for (const containerType of ['folder', 'box', 'home', 'building', 'room', 'shelf'] as const) {
+    const container = await entry(home.id, input(containerType, { containerType }));
+    assert.equal(container.containerType, containerType);
+  }
+  const box = await entry(home.id, input('Typed container', { containerType: 'box' }));
+  const child = await entry(home.id, input('Child', { parentId: box.id, kind: 'item', quantity: 3 }));
+  const updated = await request<InventoryEntry>('Alice', `${entriesPath(home.id)}/${box.id}`, 'PUT', input('Changed type', { containerType: 'home' }));
+  assert.equal(updated.containerType, 'home');
+  closeDb();
+  const records = await request<InventoryEntry[]>('Alice', entriesPath(home.id));
+  assert.equal(records.find((record) => record.id === box.id)?.containerType, 'home');
+  assert.equal(records.find((record) => record.id === child.id)?.parentId, box.id);
+  assert.equal(records.find((record) => record.id === child.id)?.containerType, null);
+  for (const containerType of ['unknown', 123, {}, '']) {
+    await request('Alice', entriesPath(home.id), 'POST', { ...input('Invalid'), containerType }, 400, 'Invalid container type.');
+    await request('Alice', `${entriesPath(home.id)}/${box.id}`, 'PUT', { ...input('Invalid'), containerType }, 400, 'Invalid container type.');
+  }
+  await request('Alice', entriesPath(home.id), 'POST', input('Not a container', { kind: 'item', containerType: 'box' }), 400);
+  const legacyInput: Partial<EntryInput> = input('Legacy client');
+  delete legacyInput.containerType;
+  const legacy = await request<InventoryEntry>('Alice', entriesPath(home.id), 'POST', legacyInput, 201);
+  assert.equal(legacy.containerType, 'folder');
+});
+
+test('migrates existing entries to folder types without losing data and can reopen repeatedly', async () => {
+  const home = await context();
+  const box = await entry(home.id, input('Existing container'));
+  const product = await entry(home.id, input('Existing item', { kind: 'item', parentId: box.id, quantity: 7, sku: 'LEGACY-1' }));
+  const { getDb } = await import('../src/modules/storage/db');
+  getDb().exec('ALTER TABLE inventory_entries DROP COLUMN containerType');
+  closeDb();
+  const records = await request<InventoryEntry[]>('Alice', entriesPath(home.id));
+  assert.equal(records.find((record) => record.id === box.id)?.containerType, 'folder');
+  const migrated = records.find((record) => record.id === product.id);
+  assert.equal(migrated?.containerType, null);
+  assert.equal(migrated?.parentId, box.id);
+  assert.equal(migrated?.quantity, 7);
+  assert.equal(migrated?.sku, 'LEGACY-1');
+  closeDb();
+  assert.deepEqual(await request<InventoryEntry[]>('Alice', entriesPath(home.id)), records);
 });

@@ -159,6 +159,11 @@ business, archives, or library), then nest **containers** freely: city, building
 floor, shelf, box, folder, etc. Objects/products and documents are leaf records.
 Their category and notes are free text; documents are catalog records, not file uploads.
 
+- Containers have a predefined type: **Folder**, **Box**, **Home**, **Building**,
+  **Room** or **Shelf**. Choose its icon when creating or editing a container.
+  The same icon is used in the tree, results, breadcrumbs, current-container empty
+  state and selected-parent preview. Changing this type preserves nested contents.
+  Existing containers are migrated to Folder without modifying names or hierarchy.
 - The Inventary interface and API messages are in English. Existing user-entered
   names, categories, notes and units are preserved.
 - Select the current context using the global header dropdown (including its usage
@@ -210,8 +215,10 @@ POST   /api/inventary/contexts/:contextId/entries/:entryId/stock
 Context create/update accepts `{ name, usage, visibility }`, where usage is
 `personal | business | archives | library` and visibility is `private | shared`.
 Entry create/update accepts the full record:
-`{ parentId, kind, name, label, description, quantity, unit, minQuantity, sku, barcode }`.
+`{ parentId, kind, containerType, name, label, description, quantity, unit, minQuantity, sku, barcode }`.
 `parentId` is `null` at the root; kind is `container | item | document`.
+`containerType` is `folder | box | home | building | room | shelf` for containers
+(omitted/null defaults to `folder` for older clients), and `null` for other entries.
 Containers require zero quantities and empty SKU/barcode. Stock adjustment accepts
 `{ delta }` and applies it atomically; quantities and thresholds are capped at `1e12`.
 

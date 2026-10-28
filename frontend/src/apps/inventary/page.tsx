@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Cookies from 'js-cookie';
 import {
-  HiOutlineArchiveBox, HiOutlineArrowPath, HiOutlineChevronRight, HiOutlineDocumentText,
+  HiOutlineArchiveBox, HiOutlineArrowPath, HiOutlineChevronRight,
   HiOutlineFolder, HiOutlineMagnifyingGlass, HiOutlineMinus,
   HiOutlinePencilSquare, HiOutlinePlus, HiOutlineTrash, HiOutlineXMark,
 } from 'react-icons/hi2';
@@ -15,15 +15,12 @@ import { Title } from '../../ui/Typography';
 import { ContextEditor, EntryEditor, Modal } from './editors';
 import { kindLabels, selectClass, usageLabels } from './labels';
 import { useAppHeader } from '../../components/Header/appHeader';
+import EntryIcon from './EntryIcon';
+import { containerTypes } from './containerTypes';
 
 type Editor = { type: 'context'; context?: InventoryContext }
   | { type: 'entry'; entry?: InventoryEntry; kind: EntryKind };
 type Removal = { type: 'context'; context: InventoryContext } | { type: 'entry'; entry: InventoryEntry };
-
-function EntryIcon({ kind, className = '' }: { kind: EntryKind; className?: string }) {
-  const Icon = kind === 'container' ? HiOutlineFolder : kind === 'document' ? HiOutlineDocumentText : HiOutlineArchiveBox;
-  return <Icon aria-hidden="true" className={className} />;
-}
 
 function ContainerTree({ entries, parentId, currentId, onNavigate }: {
   entries: InventoryEntry[]; parentId: string | null; currentId: string | null; onNavigate: (id: string) => void;
@@ -35,7 +32,7 @@ function ContainerTree({ entries, parentId, currentId, onNavigate }: {
         const content = (
           <button onClick={() => onNavigate(entry.id)} aria-current={currentId === entry.id ? 'location' : undefined}
             className={`flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-xs transition hover:bg-white/10 ${currentId === entry.id ? 'bg-emerald-500/10 text-emerald-200' : 'text-slate-300'}`}>
-            <HiOutlineFolder aria-hidden="true" className="h-4 w-4 shrink-0 text-emerald-300" />
+            <EntryIcon entry={entry} className="h-4 w-4 shrink-0 text-emerald-300" />
             <span className="truncate">{entry.name}</span>
           </button>
         );
@@ -298,19 +295,19 @@ export default function InventaryPage() {
             {!current ? (
               <div className="rounded-xl border border-dashed border-white/15 bg-white/[0.02] px-6 py-20 text-center">
                 <HiOutlineArchiveBox className="mx-auto mb-4 h-12 w-12 text-emerald-300/60" />
-                <h2 className="text-lg font-semibold">Your inventory starts here</h2>
+                <h2 className="text-lg font-semibold">No context selected</h2>
                 <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-slate-400">
-                  Create a context, then add places, containers and items, just like folders.
-                  Home / Attic / Winter box 2 / Sweater, or Business / City / Building / Shelf / Document.
+                  Select or create a context to manage containers, objects and documents
+                  in a structured hierarchy.
                 </p>
                 <Button className="mt-6" disabled={disabled} onClick={() => openEditor({ type: 'context' })}>Create a context</Button>
               </div>
             ) : (
               <div className={loading ? 'pointer-events-none opacity-50' : ''}>
-                <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
                     <h2 className="break-words text-xl font-semibold">{current.name}</h2>
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <Badge tone={current.visibility === 'private' ? 'neutral' : 'success'}>{current.visibility === 'private' ? 'Private' : 'Shared'}</Badge>
                       <span className="text-xs text-slate-400">{usageLabels[current.usage]} · Created by {current.owner}</span>
                     </div>
@@ -333,7 +330,9 @@ export default function InventaryPage() {
                       <button className="text-emerald-200 hover:underline" onClick={() => navigate(null)}>{current.name}</button>
                       {ancestors(parentId).map((entry) => <span key={entry.id} className="inline-flex items-center gap-2">
                         <HiOutlineChevronRight className="h-3 w-3 text-slate-600" />
-                        <button className="text-slate-300 hover:text-white" onClick={() => navigate(entry.id)}>{entry.name}</button>
+                        <button className="inline-flex items-center gap-1.5 text-slate-300 hover:text-white" onClick={() => navigate(entry.id)}>
+                          <EntryIcon entry={entry} className="h-4 w-4 shrink-0 text-emerald-300" />{entry.name}
+                        </button>
                       </span>)}
                     </nav>
                     <div className="flex flex-wrap gap-2">
@@ -368,9 +367,9 @@ export default function InventaryPage() {
                         {visible.map((entry) => <tr key={entry.id} className={selectedId === entry.id ? 'bg-emerald-500/[0.07]' : 'hover:bg-white/[0.03]'}>
                           <td className="min-w-[220px] p-4">
                             <button onClick={() => entry.kind === 'container' ? navigate(entry.id) : setSelectedId(entry.id)} className="flex items-center gap-3 text-left">
-                              <span className="rounded-lg border border-white/10 bg-white/5 p-2"><EntryIcon kind={entry.kind} className={`h-5 w-5 ${entry.kind === 'container' ? 'text-emerald-300' : 'text-slate-300'}`} /></span>
+                              <span className="rounded-lg border border-white/10 bg-white/5 p-2"><EntryIcon entry={entry} className={`h-5 w-5 ${entry.kind === 'container' ? 'text-emerald-300' : 'text-slate-300'}`} /></span>
                               <span><span className="block break-words text-sm font-medium text-slate-100">{entry.name}</span>
-                                <span className="mt-1 block text-[11px] text-slate-500">{entry.label || kindLabels[entry.kind]}{searching ? ` · ${path(entry.parentId)}` : ''}</span></span>
+                                <span className="mt-1 block text-[11px] text-slate-500">{entry.label || (entry.kind === 'container' ? containerTypes[entry.containerType ?? 'folder'].label : kindLabels[entry.kind])}{searching ? ` · ${path(entry.parentId)}` : ''}</span></span>
                             </button>
                           </td>
                           <td className="p-4 font-mono text-[11px] text-slate-400">
@@ -392,7 +391,8 @@ export default function InventaryPage() {
                     </table>
                   </div>
                   {!visible.length && <div className="px-6 py-14 text-center">
-                    <HiOutlineFolder className="mx-auto mb-3 h-9 w-9 text-slate-600" />
+                    {currentContainer ? <EntryIcon entry={currentContainer} className="mx-auto mb-3 h-9 w-9 text-slate-600" />
+                      : <HiOutlineFolder className="mx-auto mb-3 h-9 w-9 text-slate-600" />}
                     <p className="text-sm text-slate-300">{searching || kind ? 'No entries match these filters.' : 'This container is empty.'}</p>
                     <p className="mt-2 text-xs text-slate-500">{searching || kind ? 'Try another name, SKU or barcode.' : 'Add a container to create a level, or an item / document to catalog it.'}</p>
                   </div>}

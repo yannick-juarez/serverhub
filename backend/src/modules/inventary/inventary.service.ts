@@ -3,6 +3,7 @@ import { getDb } from '../storage/db';
 
 export type ContextUsage = 'personal' | 'business' | 'archives' | 'library';
 export type EntryKind = 'container' | 'item' | 'document';
+export type ContainerType = 'folder' | 'box' | 'home' | 'building' | 'room' | 'shelf';
 export interface InventoryContext {
   id: string;
   name: string;
@@ -16,6 +17,7 @@ export interface InventoryEntry {
   contextId: string;
   parentId: string | null;
   kind: EntryKind;
+  containerType: ContainerType | null;
   name: string;
   label: string;
   description: string;
@@ -71,6 +73,14 @@ function db(): ReturnType<typeof getDb> {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_entries_sku
         ON inventory_entries(contextId, sku) WHERE sku <> '';
     `);
+    const columns = connection.prepare('PRAGMA table_info(inventory_entries)').all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === 'containerType')) {
+      connection.transaction(() => {
+        connection.exec(`ALTER TABLE inventory_entries ADD COLUMN containerType TEXT
+          CHECK (containerType IS NULL OR containerType IN ('folder', 'box', 'home', 'building', 'room', 'shelf'))`);
+        connection.exec("UPDATE inventory_entries SET containerType = 'folder' WHERE kind = 'container'");
+      })();
+    }
     initializedDb = connection;
   }
   return connection;
@@ -163,8 +173,8 @@ export function createEntry(username: string, contextId: string, input: EntryInp
     const now = new Date().toISOString();
     const entry: InventoryEntry = { ...input, id: randomUUID(), contextId, createdAt: now, updatedAt: now };
     db().prepare(`INSERT INTO inventory_entries
-      (id, contextId, parentId, kind, name, label, description, quantity, unit, minQuantity, sku, barcode, createdAt, updatedAt)
-      VALUES (@id, @contextId, @parentId, @kind, @name, @label, @description, @quantity, @unit, @minQuantity, @sku, @barcode, @createdAt, @updatedAt)`)
+      (id, contextId, parentId, kind, containerType, name, label, description, quantity, unit, minQuantity, sku, barcode, createdAt, updatedAt)
+      VALUES (@id, @contextId, @parentId, @kind, @containerType, @name, @label, @description, @quantity, @unit, @minQuantity, @sku, @barcode, @createdAt, @updatedAt)`)
       .run(entry);
     return entry;
   })();
@@ -175,7 +185,7 @@ export function updateEntry(username: string, contextId: string, id: string, inp
     getContext(username, contextId);
     getEntry(contextId, id);
     validatePlacement(contextId, input, id);
-    db().prepare(`UPDATE inventory_entries SET parentId = @parentId, kind = @kind, name = @name,
+    db().prepare(`UPDATE inventory_entries SET parentId = @parentId, kind = @kind, containerType = @containerType, name = @name,
       label = @label, description = @description, quantity = @quantity, unit = @unit,
       minQuantity = @minQuantity, sku = @sku, barcode = @barcode, updatedAt = @updatedAt WHERE id = @id`)
       .run({ ...input, id, updatedAt: new Date().toISOString() });

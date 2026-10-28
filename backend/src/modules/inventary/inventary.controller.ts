@@ -37,6 +37,14 @@ function entryInput(body: unknown): EntryInput {
   const value = object(body);
   const { kind } = value;
   if (kind !== 'container' && kind !== 'item' && kind !== 'document') throw new inventory.InventoryError('Invalid entry type.');
+  const containerType = kind === 'container' ? value.containerType ?? 'folder' : value.containerType ?? null;
+  if (containerType !== null && containerType !== 'folder' && containerType !== 'box' && containerType !== 'home'
+    && containerType !== 'building' && containerType !== 'room' && containerType !== 'shelf') {
+    throw new inventory.InventoryError('Invalid container type.');
+  }
+  if (kind !== 'container' && containerType !== null) {
+    throw new inventory.InventoryError('Container types are only available for containers.');
+  }
   const parentId = value.parentId === null ? null : text(value.parentId, 'Parent', 100, true);
   const quantity = amount(value.quantity, 'Quantity');
   const minQuantity = amount(value.minQuantity, 'Low-stock threshold');
@@ -46,7 +54,7 @@ function entryInput(body: unknown): EntryInput {
     throw new inventory.InventoryError('Stock fields are only available for items and documents.');
   }
   return {
-    parentId, kind, name: text(value.name, 'Name', 200, true),
+    parentId, kind, containerType, name: text(value.name, 'Name', 200, true),
     label: text(value.label, 'Category', 100), description: text(value.description, 'Description', 5000),
     quantity, minQuantity, unit: text(value.unit, 'Unit', 40, true), sku, barcode,
   };
