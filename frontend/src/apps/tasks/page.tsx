@@ -1,5 +1,5 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { HiOutlinePencilSquare, HiOutlinePlay, HiOutlineTrash, HiOutlineUsers, HiOutlineXMark } from "react-icons/hi2";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { HiCheck, HiOutlineChevronRight, HiOutlinePlay, HiPlay, HiXMark, HiOutlineTrash, HiOutlineUsers, HiOutlineXMark } from "react-icons/hi2";
 import {
   createCronJob,
   deleteCronJob,
@@ -8,6 +8,7 @@ import {
   type CronJob,
   updateCronJob,
 } from "../../api/cron";
+import { useAppHeader } from "../../components/Header/appHeader";
 import useDocumentTitle from "../../hooks/useDocumentTitle";
 
 type ScheduleMode = "hourly" | "daily" | "weekly" | "monthly" | "custom";
@@ -82,23 +83,6 @@ function buildScheduleExpression(schedule: ScheduleFormState): string {
       return schedule.customPattern.trim();
     default:
       return schedule.customPattern.trim();
-  }
-}
-
-function scheduleModeLabel(mode: ScheduleMode): string {
-  switch (mode) {
-    case "hourly":
-      return "Hourly";
-    case "daily":
-      return "Daily";
-    case "weekly":
-      return "Weekly";
-    case "monthly":
-      return "Monthly";
-    case "custom":
-      return "Custom";
-    default:
-      return "Custom";
   }
 }
 
@@ -226,6 +210,29 @@ function emptyToDefault(value: string): string {
   return trimmed.length > 0 ? trimmed : "-";
 }
 
+function formatClock(hour: string, minute: string): string {
+  return `${hour.trim().padStart(2, "0")}:${minute.trim().padStart(2, "0")}`;
+}
+
+function humanizeSchedule(schedule: string): string | null {
+  const parsed = parseScheduleState(schedule);
+
+  switch (parsed.mode) {
+    case "hourly":
+      return `Hourly at :${parsed.minute.trim().padStart(2, "0")}`;
+    case "daily":
+      return `Daily at ${formatClock(parsed.hour, parsed.minute)}`;
+    case "weekly": {
+      const weekday = weekdayOptions.find((option) => option.value === parsed.weekday)?.label.slice(0, 3) ?? "Mon";
+      return `${weekday} at ${formatClock(parsed.hour, parsed.minute)}`;
+    }
+    case "monthly":
+      return `Monthly, day ${parsed.dayOfMonth} at ${formatClock(parsed.hour, parsed.minute)}`;
+    default:
+      return null;
+  }
+}
+
 function formatDateTime(value?: string): string {
   if (!value?.trim()) {
     return "-";
@@ -260,18 +267,11 @@ type ScheduleBuilderProps = {
 };
 
 function ScheduleBuilder({ idPrefix, value, onChange, disabled = false }: ScheduleBuilderProps) {
-  const preview = buildScheduleExpression(value);
-
   return (
-    <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs uppercase tracking-wide text-slate-400">Schedule</p>
-          <h3 className="mt-1 text-sm font-semibold text-white">{scheduleModeLabel(value.mode)}</h3>
-        </div>
-
-        <label className="text-xs text-slate-400">
-          Preset
+    <div>
+      <div>
+        <label className="block text-xs text-slate-400">
+          Schedule
           <select
             className="mt-1 w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-slate-100 outline-none disabled:opacity-60"
             value={value.mode}
@@ -336,9 +336,7 @@ function ScheduleBuilder({ idPrefix, value, onChange, disabled = false }: Schedu
         </label>
       </div>
 
-      <p className="mt-2 text-xs text-slate-400">{describeSchedule(value)}</p>
-
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      <div className="mt-3 grid gap-3 sm:auto-cols-fr sm:grid-flow-col">
         {value.mode === "hourly" ? (
           <label className="text-xs text-slate-400">
             Minute
@@ -486,7 +484,7 @@ function ScheduleBuilder({ idPrefix, value, onChange, disabled = false }: Schedu
         ) : null}
 
         {value.mode === "custom" ? (
-          <label className="sm:col-span-2 text-xs text-slate-400">
+          <label className="text-xs text-slate-400">
             Cron pattern
             <textarea
               id={`${idPrefix}-custom`}
@@ -500,11 +498,64 @@ function ScheduleBuilder({ idPrefix, value, onChange, disabled = false }: Schedu
         ) : null}
       </div>
 
-      <div className="mt-4 rounded-lg border border-dashed border-white/15 bg-black/20 px-3 py-2">
-        <p className="text-[11px] uppercase tracking-wide text-slate-500">Generated cron</p>
-        <p className="mt-1 break-all font-mono text-sm text-amber-200">{preview || "-"}</p>
-      </div>
+      {value.mode !== "custom" ? (
+        <p className="mt-3 text-sm text-white">{describeSchedule(value)}</p>
+      ) : null}
     </div>
+  );
+}
+
+type RunState = "running" | "success" | "error";
+
+const RUN_FEEDBACK_MS = 2500;
+
+function RunStatusIcon({ state, className = "h-4 w-4" }: { state?: RunState; className?: string }) {
+  if (state === "running") {
+    return (
+      <span
+        aria-hidden="true"
+        className={`${className} inline-block animate-spin rounded-full border-2 border-current border-r-transparent`}
+      />
+    );
+  }
+  if (state === "success") {
+    return <HiCheck className={`${className} text-emerald-500`} aria-hidden="true" />;
+  }
+  if (state === "error") {
+    return <HiXMark className={`${className} text-red-500`} aria-hidden="true" />;
+  }
+  return null;
+}
+
+type EnabledSwitchProps = {
+  enabled: boolean;
+  onToggle: () => void;
+  disabled?: boolean;
+};
+
+function EnabledSwitch({ enabled, onToggle, disabled = false }: EnabledSwitchProps) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      aria-label={enabled ? "Disable task" : "Enable task"}
+      title={enabled ? "Disable task" : "Enable task"}
+      disabled={disabled}
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${
+        enabled ? "border-emerald-300/40 bg-emerald-500/30" : "border-white/15 bg-white/10"
+      }`}
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle();
+      }}
+    >
+      <span
+        className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
+          enabled ? "translate-x-[18px]" : "translate-x-0.5"
+        }`}
+      />
+    </button>
   );
 }
 
@@ -513,12 +564,13 @@ type TaskFormFieldsProps = {
   onChange: (next: JobFormState) => void;
   disabled?: boolean;
   idPrefix: string;
+  showEnabled?: boolean;
 };
 
-function TaskFormFields({ form, onChange, disabled = false, idPrefix }: TaskFormFieldsProps) {
+function TaskFormFields({ form, onChange, disabled = false, idPrefix, showEnabled = true }: TaskFormFieldsProps) {
   return (
     <div className="space-y-4">
-      <label className="text-xs text-slate-400">
+      <label className="block text-xs text-slate-400">
         Name
         <input
           className="mt-1 w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-slate-100 outline-none disabled:opacity-60"
@@ -530,17 +582,14 @@ function TaskFormFields({ form, onChange, disabled = false, idPrefix }: TaskForm
         />
       </label>
 
-      <ScheduleBuilder
-        idPrefix={`${idPrefix}-schedule`}
-        value={form.schedule}
-        onChange={(schedule) => onChange({ ...form, schedule })}
-        disabled={disabled}
-      />
-
-      <label className="text-xs text-slate-400">
+      <label className="block text-xs text-slate-400">
         Command
         <textarea
-          className="mt-1 h-28 w-full resize-y rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm font-mono text-slate-100 outline-none disabled:opacity-60"
+          className="mt-1 h-28 w-full resize-y rounded-lg border border-white/10 bg-black/70 px-3 py-2.5 font-mono text-xs leading-5 text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-white/30 disabled:opacity-60"
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          autoComplete="off"
           value={form.command}
           onChange={(event) => onChange({ ...form, command: event.target.value })}
           placeholder="/usr/bin/php /var/www/app/artisan schedule:run"
@@ -548,16 +597,25 @@ function TaskFormFields({ form, onChange, disabled = false, idPrefix }: TaskForm
         />
       </label>
 
-      <label className="inline-flex items-center gap-2 text-sm text-slate-300">
-        <input
-          type="checkbox"
-          className="h-4 w-4 rounded border-white/20 bg-white/10"
-          checked={form.enabled}
-          onChange={(event) => onChange({ ...form, enabled: event.target.checked })}
-          disabled={disabled}
-        />
-        Enabled
-      </label>
+      <ScheduleBuilder
+        idPrefix={`${idPrefix}-schedule`}
+        value={form.schedule}
+        onChange={(schedule) => onChange({ ...form, schedule })}
+        disabled={disabled}
+      />
+
+      {showEnabled ? (
+        <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-white/20 bg-white/10"
+            checked={form.enabled}
+            onChange={(event) => onChange({ ...form, enabled: event.target.checked })}
+            disabled={disabled}
+          />
+          Enabled
+        </label>
+      ) : null}
     </div>
   );
 }
@@ -574,7 +632,13 @@ export default function TasksPage() {
   const [createForm, setCreateForm] = useState<JobFormState>(createDefaultFormState());
   const [editForm, setEditForm] = useState<JobFormState | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [runningJobId, setRunningJobId] = useState<string | null>(null);
+  const [runStates, setRunStates] = useState<Record<string, RunState>>({});
+  const runFeedbackTimers = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    const timers = runFeedbackTimers.current;
+    return () => Object.values(timers).forEach((timer) => window.clearTimeout(timer));
+  }, []);
 
   const sortedJobs = useMemo(() => {
     return [...jobs].sort((a, b) => a.name.localeCompare(b.name));
@@ -588,7 +652,7 @@ export default function TasksPage() {
     return jobs.find((job) => job.id === editingId) ?? null;
   }, [editingId, jobs]);
 
-  const refreshJobs = async () => {
+  const refreshJobs = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -599,11 +663,11 @@ export default function TasksPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void refreshJobs();
-  }, []);
+  }, [refreshJobs]);
 
   useEffect(() => {
     if (editingId && !editingJob) {
@@ -611,6 +675,23 @@ export default function TasksPage() {
       setEditForm(null);
     }
   }, [editingId, editingJob]);
+
+  useEffect(() => {
+    if (!editingId || createModalOpen) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setEditingId(null);
+        setEditForm(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [editingId, createModalOpen]);
 
   useEffect(() => {
     if (!createModalOpen) {
@@ -629,12 +710,29 @@ export default function TasksPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [createModalOpen]);
 
-  const openCreateModal = () => {
+  const openCreateModal = useCallback(() => {
     setError(null);
     setMessage(null);
     setCreateForm(createDefaultFormState());
     setCreateModalOpen(true);
-  };
+  }, []);
+
+  const headerConfig = useMemo(
+    () => ({
+      menus: [
+        {
+          label: "File",
+          items: [
+            { name: "New task", shortcut: "N", disabled: createModalOpen, action: openCreateModal },
+            { name: "Refresh", shortcut: "R", disabled: loading, action: () => void refreshJobs() },
+          ],
+        },
+      ],
+    }),
+    [createModalOpen, loading, openCreateModal, refreshJobs],
+  );
+
+  useAppHeader(headerConfig);
 
   const closeCreateModal = () => {
     setCreateModalOpen(false);
@@ -757,19 +855,45 @@ export default function TasksPage() {
     }
   };
 
+  const setRunState = (jobId: string, state: RunState | null) => {
+    window.clearTimeout(runFeedbackTimers.current[jobId]);
+    delete runFeedbackTimers.current[jobId];
+    setRunStates((previous) => {
+      const next = { ...previous };
+      if (state) {
+        next[jobId] = state;
+      } else {
+        delete next[jobId];
+      }
+      return next;
+    });
+    if (state === "success" || state === "error") {
+      runFeedbackTimers.current[jobId] = window.setTimeout(() => setRunState(jobId, null), RUN_FEEDBACK_MS);
+    }
+  };
+
   const runJobManually = async (job: CronJob) => {
+    if (runStates[job.id] === "running") {
+      return;
+    }
+
     setError(null);
     setMessage(null);
-    setRunningJobId(job.id);
+    setRunState(job.id, "running");
 
     try {
       const result = await runCronJob(job.id);
       const output = result.stdout.trim() || result.stderr.trim();
+      if (result.exitCode !== 0) {
+        setRunState(job.id, "error");
+        setError(`Task exited with code ${result.exitCode}${output ? `: ${output.slice(0, 140)}` : "."}`);
+        return;
+      }
+      setRunState(job.id, "success");
       setMessage(output ? `Task ran successfully: ${output.slice(0, 140)}` : "Task ran successfully.");
     } catch (err) {
+      setRunState(job.id, "error");
       setError(err instanceof Error ? err.message : "Unable to run task");
-    } finally {
-      setRunningJobId(null);
     }
   };
 
@@ -784,10 +908,7 @@ export default function TasksPage() {
       <div className="relative z-10 flex h-full w-full flex-col">
         <header className="shrink-0 border-b border-white/10 bg-black/30 px-4 py-3 backdrop-blur-md lg:px-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-wide text-slate-400">Task Manager</p>
-              <h1 className="mt-1 text-2xl font-semibold">Cron Jobs</h1>
-            </div>
+            <h1 className="text-2xl font-semibold">Task Manager</h1>
 
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -811,221 +932,229 @@ export default function TasksPage() {
         </header>
 
         <div className="flex-1 overflow-auto px-4 py-4 lg:px-6">
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-            <section className="rounded-xl border border-white/10 bg-black/40 p-4 backdrop-blur-md">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Scheduled Tasks</h2>
-                  <p className="mt-1 text-xs text-slate-500">Choose a task to open its details in the panel on the right.</p>
-                </div>
+          <div
+            className={`grid grid-cols-1 gap-4 ${editingJob ? "xl:grid-cols-[minmax(0,1fr)_440px]" : ""}`}
+          >
+            <section className="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-black/40 backdrop-blur-md">
+              <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Scheduled tasks</h2>
+                {!loading ? (
+                  <span className="text-xs text-slate-500">
+                    {sortedJobs.filter((job) => job.enabled).length} / {sortedJobs.length} active
+                  </span>
+                ) : null}
               </div>
 
-              {loading ? <div className="mt-4 text-sm text-slate-400">Loading tasks...</div> : null}
+              {loading && sortedJobs.length === 0 ? <div className="px-4 py-6 text-sm text-slate-400">Loading tasks...</div> : null}
 
               {!loading && sortedJobs.length === 0 ? (
-                <div className="mt-4 rounded-lg border border-dashed border-white/15 bg-white/5 p-6 text-sm text-slate-400">
+                <div className="m-4 rounded-lg border border-dashed border-white/15 bg-white/5 p-6 text-sm text-slate-400">
                   No cron jobs found. Use the <span className="text-orange-300">+ Create task</span> button to create your first task.
                 </div>
               ) : null}
 
-              {!loading && sortedJobs.length > 0 ? (
-                <div className="mt-4 flex flex-col gap-2">
+              {sortedJobs.length > 0 ? (
+                <ul className="divide-y divide-white/5">
                   {sortedJobs.map((job) => {
                     const managed = isManagedJob(job);
                     const selected = editingId === job.id;
+                    const recurrence = humanizeSchedule(job.schedule);
 
                     return (
-                      <article
-                        key={job.id}
-                        className={`rounded-lg border p-3 transition ${
-                          selected ? "border-orange-400/40 bg-orange-500/10" : "border-white/10 bg-black/30"
-                        }`}
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex min-w-0 items-center gap-2">
-                              <span
-                                className={`h-2.5 w-2.5 shrink-0 rounded-full ${
-                                  job.enabled ? "bg-emerald-400" : "bg-slate-500"
+                      <li key={job.id}>
+                        <div
+                          className={`group relative flex cursor-pointer items-center gap-3 px-4 py-3 transition focus-within:bg-white/[0.04] ${
+                            selected ? "bg-orange-500/10" : "hover:bg-white/[0.04]"
+                          }`}
+                          onClick={() => startEdit(job)}
+                        >
+                          <span
+                            className={`absolute inset-y-0 left-0 w-0.5 transition ${selected ? "bg-orange-400" : "bg-transparent"}`}
+                            aria-hidden="true"
+                          />
+
+                          <EnabledSwitch enabled={job.enabled} onToggle={() => void toggleJob(job)} />
+
+                          <div className="flex min-w-0 flex-1 items-center gap-3">
+                            <h3 className="min-w-0">
+                              <button
+                                type="button"
+                                aria-expanded={selected}
+                                className={`block max-w-full truncate text-left text-sm font-medium outline-none focus-visible:underline ${
+                                  job.enabled ? "text-slate-100" : "text-slate-500"
                                 }`}
-                                aria-hidden="true"
-                                title={job.enabled ? "Enabled" : "Disabled"}
-                              />
-                              <h3 className="truncate text-sm font-semibold text-slate-100">{job.name}</h3>
-                              {!managed ? (
-                                <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-slate-400">
-                                  <HiOutlineUsers className="h-3.5 w-3.5" aria-hidden="true" />
-                                  <span>External</span>
-                                </span>
-                              ) : null}
-                            </div>
-                            <p className="mt-2 font-mono text-xs text-amber-200">{emptyToDefault(job.schedule)}</p>
-                            <p className="mt-1 break-all font-mono text-xs text-slate-300">{emptyToDefault(job.command)}</p>
-                            <p className="mt-1 text-[11px] text-slate-500">ID: {job.id}</p>
+                                title={job.name}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  startEdit(job);
+                                }}
+                              >
+                                {job.name}
+                              </button>
+                            </h3>
+                            {!managed ? (
+                              <span
+                                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-400"
+                                title="Defined outside ServerHub"
+                              >
+                                <HiOutlineUsers className="h-3 w-3" aria-hidden="true" />
+                                External
+                              </span>
+                            ) : null}
                           </div>
 
-                          <div className="flex flex-wrap items-center gap-2">
-                            <button
-                              type="button"
-                              role="switch"
-                              aria-checked={job.enabled}
-                              aria-label={job.enabled ? "Disable task" : "Enable task"}
-                              title={job.enabled ? "Disable task" : "Enable task"}
-                              className={`relative inline-flex h-6 w-11 items-center rounded-full border transition ${
-                                job.enabled
-                                  ? "border-emerald-300/40 bg-emerald-500/25"
-                                  : "border-white/20 bg-white/10"
-                              }`}
-                              onClick={() => {
-                                void toggleJob(job);
-                              }}
-                            >
-                              <span
-                                className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
-                                  job.enabled ? "translate-x-6" : "translate-x-1"
-                                }`}
-                              />
-                            </button>
+                          <div className="flex shrink-0 items-center gap-2" title={recurrence ?? undefined}>
+                            {recurrence ? (
+                              <span className="hidden text-xs text-slate-400 md:inline">{recurrence}</span>
+                            ) : null}
+                            <code className="rounded-md border border-amber-300/15 bg-amber-500/10 px-2 py-0.5 font-mono text-[11px] text-amber-200">
+                              {emptyToDefault(job.schedule)}
+                            </code>
+                          </div>
+
+                          <div className="flex shrink-0 items-center gap-1 opacity-60 transition group-hover:opacity-100 group-focus-within:opacity-100">
                             <button
                               type="button"
                               aria-label="Run task"
-                              title="Run task"
-                              disabled={runningJobId === job.id}
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-emerald-300/20 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-                              onClick={() => {
+                              title="Run now"
+                              aria-busy={runStates[job.id] === "running"}
+                              disabled={runStates[job.id] === "running"}
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-300 transition hover:bg-emerald-500/15 hover:text-emerald-200 disabled:cursor-not-allowed"
+                              onClick={(event) => {
+                                event.stopPropagation();
                                 void runJobManually(job);
                               }}
                             >
-                              <HiOutlinePlay className="h-4 w-4" aria-hidden="true" />
-                            </button>
-                            <button
-                              type="button"
-                              aria-label="Edit task"
-                              title="Edit task"
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-blue-300/20 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-                              onClick={() => startEdit(job)}
-                            >
-                              <HiOutlinePencilSquare className="h-4 w-4" aria-hidden="true" />
+                              {runStates[job.id] ? (
+                                <RunStatusIcon state={runStates[job.id]} />
+                              ) : (
+                                <HiOutlinePlay className="h-4 w-4" aria-hidden="true" />
+                              )}
                             </button>
                             <button
                               type="button"
                               aria-label="Delete task"
-                              title="Delete task"
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-300/20 bg-red-500/10 text-red-200 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-                              onClick={() => {
+                              title="Delete"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-300 transition hover:bg-red-500/15 hover:text-red-200"
+                              onClick={(event) => {
+                                event.stopPropagation();
                                 void handleDelete(job);
                               }}
                             >
                               <HiOutlineTrash className="h-4 w-4" aria-hidden="true" />
                             </button>
+                            <HiOutlineChevronRight
+                              className={`ml-1 h-4 w-4 transition ${selected ? "text-orange-300" : "text-slate-600 group-hover:text-slate-400"}`}
+                              aria-hidden="true"
+                            />
                           </div>
                         </div>
-                      </article>
+                      </li>
                     );
                   })}
-                </div>
+                </ul>
               ) : null}
             </section>
 
-            <aside className="rounded-xl border border-white/10 bg-black/40 backdrop-blur-md xl:sticky xl:top-4">
-              <div className="flex items-start justify-between gap-3 border-b border-white/10 px-4 py-4">
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-slate-400">Task details</p>
-                  <h2 className="mt-1 text-lg font-semibold text-white">
-                    {editingJob ? editingJob.name : "Select a task to edit"}
-                  </h2>
-                </div>
-
-                {editingJob ? (
-                  <button
-                    type="button"
-                    className="rounded-md border border-white/10 bg-white/5 p-2 text-slate-300 transition hover:bg-white/10 hover:text-white"
-                    onClick={clearEditing}
-                    aria-label="Close details panel"
-                    title="Close details panel"
-                  >
-                    <HiOutlineXMark className="h-4 w-4" aria-hidden="true" />
-                  </button>
-                ) : null}
-              </div>
-
-              {!editingJob || !editForm ? (
-                <div className="px-4 py-6 text-sm text-slate-400">
-                  Pick a cron job from the list to inspect or update it here.
-                </div>
-              ) : (
-                <div className="space-y-4 p-4">
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                      <p className="text-[11px] uppercase tracking-wide text-slate-500">Status</p>
-                      <p className="mt-1 text-sm text-slate-100">{editForm.enabled ? "Enabled" : "Disabled"}</p>
-                      <p className="mt-2 text-xs text-slate-400">{isManagedJob(editingJob) ? "Managed job" : "External job"}</p>
-                    </div>
-
-                    <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                      <p className="text-[11px] uppercase tracking-wide text-slate-500">Identifiers</p>
-                      <p className="mt-1 break-all text-sm text-slate-100">ID: {editingJob.id}</p>
-                      <p className="mt-2 text-xs text-slate-400">Schedule: {buildScheduleExpression(editForm.schedule) || "-"}</p>
-                    </div>
-
-                    <div className="rounded-lg border border-white/10 bg-black/20 p-3 sm:col-span-2">
-                      <p className="text-[11px] uppercase tracking-wide text-slate-500">Runtime info</p>
-                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                        <div>
-                          <p className="text-xs text-slate-400">Last run</p>
-                          <p className="mt-1 text-sm text-slate-100">{formatDateTime(editingJob.lastRun)}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-slate-400">Next run</p>
-                          <p className="mt-1 text-sm text-slate-100">{formatDateTime(editingJob.nextRun)}</p>
-                        </div>
-                      </div>
-                    </div>
+            {editingJob && editForm ? (
+              <>
+                <div
+                  className="absolute inset-0 z-[110] bg-black/50 xl:hidden"
+                  onClick={clearEditing}
+                  aria-hidden="true"
+                />
+                <aside className="absolute inset-y-0 right-0 z-[111] flex w-full max-w-md flex-col overflow-hidden border-l border-white/10 bg-zinc-950 shadow-2xl xl:sticky xl:inset-auto xl:top-0 xl:z-auto xl:max-h-[calc(100vh-10rem)] xl:max-w-none xl:rounded-xl xl:border xl:bg-black/40 xl:shadow-none">
+                  <div className="flex shrink-0 items-center gap-3 border-b border-white/10 px-4 py-3">
+                    <EnabledSwitch enabled={editingJob.enabled} onToggle={() => void toggleJob(editingJob)} />
+                    <h2
+                      className={`min-w-0 flex-1 truncate text-base font-semibold ${editingJob.enabled ? "text-white" : "text-slate-400"}`}
+                      title={editingJob.name}
+                    >
+                      {editingJob.name}
+                    </h2>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md p-1.5 text-slate-400 transition hover:bg-white/10 hover:text-white"
+                      onClick={clearEditing}
+                      aria-label="Close details panel"
+                      title="Close"
+                    >
+                      <HiOutlineXMark className="h-4 w-4" aria-hidden="true" />
+                    </button>
                   </div>
 
-                  <form className="space-y-4" onSubmit={onSubmitEdit}>
-                    <TaskFormFields
-                      idPrefix="edit"
-                      form={editForm}
-                      onChange={(next) => setEditForm(next)}
-                      disabled={submitting}
-                    />
-
-                    <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          disabled={runningJobId === editingJob.id}
-                          className="rounded-lg border border-emerald-300/20 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/20 disabled:opacity-60"
-                          onClick={() => {
-                            void runJobManually(editingJob);
-                          }}
-                        >
-                          {runningJobId === editingJob.id ? "Running..." : "Run"}
-                        </button>
-                      <button
-                        type="submit"
+                  <form className="flex min-h-0 flex-1 flex-col" onSubmit={onSubmitEdit}>
+                    <div className="flex-1 space-y-6 overflow-auto p-4">
+                      <TaskFormFields
+                        idPrefix="edit"
+                        form={editForm}
+                        onChange={(next) => setEditForm(next)}
                         disabled={submitting}
-                        className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-orange-400 disabled:opacity-60"
-                      >
-                        {submitting ? "Saving..." : "Update task"}
-                      </button>
+                        showEnabled={false}
+                      />
+
+                      <section className="border-t border-white/10 pt-4">
+                        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Details</h3>
+                        <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
+                          <dt className="text-slate-500">Cron</dt>
+                          <dd className="font-mono text-amber-200">{buildScheduleExpression(editForm.schedule) || "-"}</dd>
+                          <dt className="text-slate-500">Last run</dt>
+                          <dd className="text-slate-200">{formatDateTime(editingJob.lastRun)}</dd>
+                          <dt className="text-slate-500">Next run</dt>
+                          <dd className="text-slate-200">{formatDateTime(editingJob.nextRun)}</dd>
+                          <dt className="text-slate-500">Source</dt>
+                          <dd className="text-slate-200">{isManagedJob(editingJob) ? "Managed by ServerHub" : "External crontab"}</dd>
+                          <dt className="text-slate-500">ID</dt>
+                          <dd className="break-all font-mono text-slate-400">{editingJob.id}</dd>
+                        </dl>
+                      </section>
+                    </div>
+
+                    <div className="flex shrink-0 items-center gap-2 border-t border-white/10 bg-black/30 px-4 py-3">
                       <button
                         type="button"
-                        className="rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-sm text-slate-200 transition hover:bg-white/10"
+                        aria-busy={runStates[editingJob.id] === "running"}
+                        disabled={runStates[editingJob.id] === "running"}
+                        className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-black transition hover:bg-slate-200 disabled:cursor-progress"
                         onClick={() => {
-                          if (editingJob) {
-                            setEditForm(jobToForm(editingJob));
-                          }
+                          void runJobManually(editingJob);
                         }}
-                        disabled={submitting}
                       >
-                        Reset
+                        {runStates[editingJob.id] ? (
+                          <RunStatusIcon state={runStates[editingJob.id]} />
+                        ) : (
+                          <HiPlay className="h-4 w-4 text-emerald-500" aria-hidden="true" />
+                        )}
+                        {runStates[editingJob.id] === "running"
+                          ? "Running..."
+                          : runStates[editingJob.id] === "success"
+                            ? "Done"
+                            : runStates[editingJob.id] === "error"
+                              ? "Failed"
+                              : "Run now"}
                       </button>
+                      <div className="ml-auto flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="rounded-lg px-3 py-2 text-sm text-slate-300 transition hover:bg-white/10 hover:text-white disabled:opacity-60"
+                          onClick={() => setEditForm(jobToForm(editingJob))}
+                          disabled={submitting}
+                        >
+                          Reset
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={submitting}
+                          className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-orange-400 disabled:opacity-60"
+                        >
+                          {submitting ? "Saving..." : "Save"}
+                        </button>
+                      </div>
                     </div>
                   </form>
-                </div>
-              )}
-            </aside>
+                </aside>
+              </>
+            ) : null}
           </div>
 
           {error ? (

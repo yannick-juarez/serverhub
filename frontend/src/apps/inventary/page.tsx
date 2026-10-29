@@ -232,6 +232,9 @@ export default function InventaryPage() {
         { name: 'Delete context', disabled: headerDisabled || !current || !owned,
           action: () => { if (current && owned) openRemoval({ type: 'context', context: current }); } },
       ] },
+      { label: 'View', items: [
+        { name: 'Refresh', shortcut: 'R', disabled: headerDisabled, action: () => void reload(contextId) },
+      ] },
     ],
     status: {
       tone: error ? 'error' : busy || loading ? 'pending' : editor || removal ? 'idle' : notice ? 'success' : 'idle',
@@ -272,14 +275,14 @@ export default function InventaryPage() {
             </nav>
           ) : <span className="text-xs text-slate-400">No context selected</span>}
           <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" disabled={disabled} onClick={() => void reload(contextId)} aria-label="Refresh" title="Refresh (R)">
+              <HiOutlineArrowPath className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            </Button>
             {current && <>
               {currentContainer && <Button variant="secondary" disabled={disabled} onClick={() => openEditor({ type: 'entry', entry: currentContainer, kind: currentContainer.kind })}>Edit container</Button>}
               <Button variant="secondary" disabled={disabled} onClick={() => openEditor({ type: 'entry', kind: 'container' })}><HiOutlineFolder className="h-4 w-4" /> Container</Button>
               <Button disabled={disabled} onClick={() => openEditor({ type: 'entry', kind: 'item' })}><HiOutlinePlus className="h-4 w-4" /> Add entry</Button>
             </>}
-            <Button variant="secondary" disabled={disabled} onClick={() => void reload(contextId)} aria-label="Refresh">
-              <HiOutlineArrowPath className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            </Button>
           </div>
         </header>
 

@@ -73,6 +73,8 @@ const Header: React.FC<{ opaque?: boolean }> = ({ opaque = true }) => {
   }, [location.pathname]);
 
   const title = currentApp?.title || 'AI NETWORK OPERATIONS';
+  const status = appHeader?.status;
+  const selection = appHeader?.selection;
   const actionMenus = useMemo(() => {
     const baseMenus = (appHeader?.menus ?? currentApp?.menus ?? []).map((menu) => ({
       ...menu,
@@ -109,13 +111,16 @@ const Header: React.FC<{ opaque?: boolean }> = ({ opaque = true }) => {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || event.altKey || event.key.toLowerCase() !== 'n') return;
+      if (event.defaultPrevented || event.isComposing || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key !== 'n' && key !== 'r') return;
       const modified = event.ctrlKey || event.metaKey;
+      if (modified && key !== 'n') return;
       if (!modified) {
         if (event.shiftKey || event.composedPath().some((target) => target instanceof HTMLElement
           && (target.isContentEditable || target.matches('input, textarea, select, [role="textbox"], [role="combobox"], [role="menu"], [role="menuitem"]')))) return;
       }
-      const shortcut = modified ? (event.shiftKey ? 'Ctrl+Shift+N' : 'Ctrl+N') : 'N';
+      const shortcut = modified ? (event.shiftKey ? 'Ctrl+Shift+N' : 'Ctrl+N') : key.toUpperCase();
       const item = actionMenus.flatMap((menu) => menu.items).find((item) => item.shortcut === shortcut);
       if (!item) return;
       if (!modified && item.disabled) return;
@@ -128,7 +133,7 @@ const Header: React.FC<{ opaque?: boolean }> = ({ opaque = true }) => {
 
   return (
     <div className="w-full left-0 right-0 z-40">
-      <div className={`backdrop-blur-${opaque ? 'lg' : 'sm'} bg-black/${opaque ? '20' : '0'} flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 ${appHeader ? 'lg:grid lg:grid-cols-[minmax(max-content,1fr)_minmax(0,auto)_minmax(max-content,1fr)]' : ''} ${opaque ? 'border-b' : ''} border-white/10 text-xs z-50 w-full`}>
+      <div className={`backdrop-blur-${opaque ? 'lg' : 'sm'} bg-black/${opaque ? '20' : '0'} flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 ${status || selection ? 'lg:grid lg:grid-cols-[minmax(max-content,1fr)_minmax(0,auto)_minmax(max-content,1fr)]' : ''} ${opaque ? 'border-b' : ''} border-white/10 text-xs z-50 w-full`}>
         <div className="flex items-center space-x-4 z-50">
           <h1 className="text-xs font-bold text-white uppercase font-sans">{title}</h1>
           <div className="flex flex-row justify-center items-center z-50">
@@ -140,35 +145,39 @@ const Header: React.FC<{ opaque?: boolean }> = ({ opaque = true }) => {
             ))}
           </div>
         </div>
-        {appHeader && <div className="flex min-w-0 max-w-full items-center justify-center gap-3 justify-self-center py-1">
-          <div role="status" aria-live="polite" aria-atomic="true"
-            className={appHeader.status.text ? `flex min-w-0 items-center gap-1.5 border-r border-white/20 pr-3 ${appHeader.status.tone === 'error' ? 'text-red-300' : appHeader.status.tone === 'success' ? 'text-emerald-300' : 'text-slate-400'}` : 'sr-only'}>
-            {appHeader.status.tone === 'success' && <HiOutlineCheck aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />}
-            {appHeader.status.tone === 'error' && <HiOutlineExclamationCircle aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />}
-            {appHeader.status.tone === 'pending' && <span aria-hidden="true" className="h-3 w-3 shrink-0 animate-spin rounded-full border border-current border-r-transparent" />}
-            <span title={appHeader.status.text} className="max-w-40 truncate text-xs">{appHeader.status.text}</span>
-          </div>
-          <Menu as="div" className="relative min-w-0">
-            <MenuButton disabled={appHeader.selection.disabled}
-              aria-label={`${appHeader.selection.label}: ${appHeader.selection.options.find((option) => option.value === appHeader.selection.value)?.label ?? appHeader.selection.placeholder}`}
-              className="flex max-w-60 items-center gap-2 rounded px-2 py-1 text-gray-200 hover:bg-white/10 disabled:opacity-50">
-              <HiOutlineArchiveBox aria-hidden="true" className="h-4 w-4 shrink-0 text-emerald-300" />
-              <span className="truncate font-semibold">{appHeader.selection.options.find((option) => option.value === appHeader.selection.value)?.label ?? appHeader.selection.placeholder}</span>
-              <HiOutlineChevronDown aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-            </MenuButton>
-            <MenuItems modal={false} className="absolute right-0 top-full z-50 mt-1 max-h-80 w-72 max-w-[90vw] overflow-auto rounded-lg border border-white/10 bg-zinc-950/95 p-1 text-white shadow-xl backdrop-blur-md focus:outline-none">
-              {appHeader.selection.options.length ? appHeader.selection.options.map((option) => (
-                <MenuItem key={option.value}>
-                  <button type="button" aria-current={option.value === appHeader.selection.value ? 'true' : undefined}
-                    onClick={() => appHeader.selection.onChange(option.value)}
-                    className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs data-[focus]:bg-white/10">
-                    <span className="min-w-0 flex-1"><span className="block truncate font-semibold">{option.label}</span><span className="mt-1 block text-slate-400">{option.detail}</span></span>
-                    {option.value === appHeader.selection.value && <HiOutlineCheck aria-hidden="true" className="h-4 w-4 shrink-0 text-emerald-300" />}
-                  </button>
-                </MenuItem>
-              )) : <p className="px-3 py-2 text-xs text-slate-400">No contexts yet. Use File → New context.</p>}
-            </MenuItems>
-          </Menu>
+        {(status || selection) && <div className="flex min-w-0 max-w-full items-center justify-center gap-3 justify-self-center py-1">
+          {status && (
+            <div role="status" aria-live="polite" aria-atomic="true"
+              className={status.text ? `flex min-w-0 items-center gap-1.5 border-r border-white/20 pr-3 ${status.tone === 'error' ? 'text-red-300' : status.tone === 'success' ? 'text-emerald-300' : 'text-slate-400'}` : 'sr-only'}>
+              {status.tone === 'success' && <HiOutlineCheck aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />}
+              {status.tone === 'error' && <HiOutlineExclamationCircle aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />}
+              {status.tone === 'pending' && <span aria-hidden="true" className="h-3 w-3 shrink-0 animate-spin rounded-full border border-current border-r-transparent" />}
+              <span title={status.text} className="max-w-40 truncate text-xs">{status.text}</span>
+            </div>
+          )}
+          {selection && (
+            <Menu as="div" className="relative min-w-0">
+              <MenuButton disabled={selection.disabled}
+                aria-label={`${selection.label}: ${selection.options.find((option) => option.value === selection.value)?.label ?? selection.placeholder}`}
+                className="flex max-w-60 items-center gap-2 rounded px-2 py-1 text-gray-200 hover:bg-white/10 disabled:opacity-50">
+                <HiOutlineArchiveBox aria-hidden="true" className="h-4 w-4 shrink-0 text-emerald-300" />
+                <span className="truncate font-semibold">{selection.options.find((option) => option.value === selection.value)?.label ?? selection.placeholder}</span>
+                <HiOutlineChevronDown aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+              </MenuButton>
+              <MenuItems modal={false} className="absolute right-0 top-full z-50 mt-1 max-h-80 w-72 max-w-[90vw] overflow-auto rounded-lg border border-white/10 bg-zinc-950/95 p-1 text-white shadow-xl backdrop-blur-md focus:outline-none">
+                {selection.options.length ? selection.options.map((option) => (
+                  <MenuItem key={option.value}>
+                    <button type="button" aria-current={option.value === selection.value ? 'true' : undefined}
+                      onClick={() => selection.onChange(option.value)}
+                      className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs data-[focus]:bg-white/10">
+                      <span className="min-w-0 flex-1"><span className="block truncate font-semibold">{option.label}</span><span className="mt-1 block text-slate-400">{option.detail}</span></span>
+                      {option.value === selection.value && <HiOutlineCheck aria-hidden="true" className="h-4 w-4 shrink-0 text-emerald-300" />}
+                    </button>
+                  </MenuItem>
+                )) : <p className="px-3 py-2 text-xs text-slate-400">No contexts yet. Use File → New context.</p>}
+              </MenuItems>
+            </Menu>
+          )}
         </div>}
         <div className="flex items-center justify-self-end space-x-2 z-50">
           <div className='border-r border-gray-500 h-4'></div>

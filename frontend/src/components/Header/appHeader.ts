@@ -3,8 +3,8 @@ import type { MenuConfig } from '../../menus/MenuConfig';
 
 export interface AppHeaderConfig {
   menus: MenuConfig[];
-  status: { tone: 'idle' | 'pending' | 'success' | 'error'; text: string };
-  selection: {
+  status?: { tone: 'idle' | 'pending' | 'success' | 'error'; text: string };
+  selection?: {
     label: string;
     value: string | null;
     placeholder: string;

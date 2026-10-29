@@ -1,21 +1,40 @@
 import { useState, type ReactNode } from "react";
-import { HiOutlineCheck, HiOutlinePlus, HiOutlineSquares2X2, HiOutlineTrash } from "react-icons/hi2";
+import { HiOutlineArrowPath, HiOutlineCheck, HiOutlineInboxStack, HiOutlinePlus, HiOutlineRocketLaunch, HiOutlineSquares2X2, HiOutlineTrash } from "react-icons/hi2";
 import Input from "../../components/Input";
+import { ToastContainer } from "../../components/ToastContainer";
 import useDocumentTitle from "../../hooks/useDocumentTitle";
+import { useToast } from "../../hooks/useToast";
+import Alert from "../../ui/Alert";
 import Badge from "../../ui/Badge";
 import Button from "../../ui/Button";
+import Checkbox from "../../ui/Checkbox";
 import CollapsibleSection from "../../ui/CollapsibleSection";
+import ConfirmDialog from "../../ui/ConfirmDialog";
+import EmptyState from "../../ui/EmptyState";
 import IconButton from "../../ui/IconButton";
+import InlineConfirm from "../../ui/InlineConfirm";
 import PanelWindow from "../../ui/PanelWindow";
+import SegmentedControl from "../../ui/SegmentedControl";
+import Skeleton from "../../ui/Skeleton";
+import Toggle from "../../ui/Toggle";
 import { Subtitle, Title } from "../../ui/Typography";
 
 const sections = [
   { id: "typography", label: "Typography" },
   { id: "buttons", label: "Buttons" },
   { id: "fields", label: "Form fields" },
+  { id: "controls", label: "Toggles & choices" },
+  { id: "dialogs", label: "Confirms" },
+  { id: "alerts", label: "Alerts & toasts" },
+  { id: "states", label: "Empty & loading" },
   { id: "feedback", label: "Badges & colors" },
   { id: "surfaces", label: "Panels" },
 ];
+
+type ViewMode = "list" | "grid" | "timeline";
+type ConfirmKind = "publish" | "delete" | null;
+
+const wait = (duration: number) => new Promise((resolve) => window.setTimeout(resolve, duration));
 
 type ShowcaseProps = {
   id: string;
@@ -51,6 +70,34 @@ export default function UiLibraryPage() {
   const [name, setName] = useState("");
   const [compact, setCompact] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [notifications, setNotifications] = useState(true);
+  const [autoBackup, setAutoBackup] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const [confirmKind, setConfirmKind] = useState<ConfirmKind>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
+  const [showSkeleton, setShowSkeleton] = useState(true);
+  const { toasts, showToast, removeToast } = useToast();
+
+  const closeConfirm = () => {
+    if (!confirmLoading) {
+      setConfirmKind(null);
+    }
+  };
+
+  const confirmAction = async () => {
+    const isDelete = confirmKind === "delete";
+    setConfirmLoading(true);
+    await wait(700);
+    setConfirmLoading(false);
+    setConfirmKind(null);
+    showToast({
+      title: isDelete ? "Delete preview complete" : "Changes published",
+      subtitle: isDelete ? "No workspace was deleted. This is only a demo." : "Your preview changes are now live.",
+      type: isDelete ? "warning" : "success",
+      duration: 3500,
+    });
+  };
 
   return (
     <div className="relative h-full w-full overflow-auto bg-black text-white">
@@ -60,7 +107,6 @@ export default function UiLibraryPage() {
       </div>
       <main className="relative mx-auto w-full max-w-7xl p-5 lg:p-8">
         <header className="mb-6 border-b border-white/10 pb-6">
-          <p className="mb-3 text-xs uppercase tracking-[0.25em] text-violet-300">ServerHub / Design system</p>
           <div className="flex flex-wrap items-center justify-between gap-4">
             <Title>UI Library</Title>
             <Badge tone="success">Reusable components</Badge>
@@ -168,6 +214,179 @@ export default function UiLibraryPage() {
             </Showcase>
 
             <Showcase
+              id="controls"
+              title="Toggles & choices"
+              description="Use toggles for immediate on/off settings, checkboxes for consent or multi-select, and segmented controls for a single choice among a few options."
+              code={`import Toggle from "../../ui/Toggle";\nimport Checkbox from "../../ui/Checkbox";\nimport SegmentedControl from "../../ui/SegmentedControl";\n\n<Toggle\n  label="Email notifications"\n  description="Receive alerts when a task fails."\n  checked={enabled}\n  onChange={setEnabled}\n/>\n\n<Checkbox\n  label="I understand the impact"\n  checked={accepted}\n  onChange={(event) => setAccepted(event.target.checked)}\n/>\n\n<SegmentedControl\n  label="View"\n  value={view}\n  onChange={setView}\n  options={[\n    { value: "list", label: "List" },\n    { value: "grid", label: "Grid" },\n  ]}\n/>`}
+            >
+              <div className="grid gap-6 lg:grid-cols-2">
+                <div className="space-y-4 rounded-lg border border-white/10 bg-white/5 p-4">
+                  <Toggle
+                    label="Email notifications"
+                    description="Receive an alert when a scheduled task fails."
+                    checked={notifications}
+                    onChange={setNotifications}
+                  />
+                  <div className="h-px bg-white/10" />
+                  <Toggle
+                    label="Automatic backups"
+                    description="Create a daily backup at 02:00."
+                    checked={autoBackup}
+                    onChange={setAutoBackup}
+                  />
+                  <div className="h-px bg-white/10" />
+                  <Toggle label="Maintenance mode" description="Managed by an administrator." checked={false} onChange={() => undefined} disabled />
+                </div>
+                <div className="space-y-5 rounded-lg border border-white/10 bg-white/5 p-4">
+                  <Checkbox
+                    label="I understand this action affects all users"
+                    description="Required before applying workspace-wide changes."
+                    checked={acceptedTerms}
+                    onChange={(event) => setAcceptedTerms(event.target.checked)}
+                  />
+                  <SegmentedControl
+                    label="Display mode"
+                    value={viewMode}
+                    onChange={setViewMode}
+                    options={[
+                      { value: "list", label: "List" },
+                      { value: "grid", label: "Grid" },
+                      { value: "timeline", label: "Timeline" },
+                    ]}
+                  />
+                  <p className="text-xs text-slate-400">
+                    Notifications {notifications ? "on" : "off"} · backups {autoBackup ? "on" : "off"} · {viewMode} view
+                  </p>
+                </div>
+              </div>
+            </Showcase>
+
+            <Showcase
+              id="dialogs"
+              title="Confirms"
+              description="Use inline confirms for quick, reversible decisions in rows or toolbars. Use a dialog when the action needs more context. Escape cancels both."
+              code={`import InlineConfirm from "../../ui/InlineConfirm";\nimport ConfirmDialog from "../../ui/ConfirmDialog";\n\n<InlineConfirm\n  label="Delete"\n  confirmLabel="Delete file"\n  onConfirm={deleteFile}\n/>\n\n<Button variant="destructive" onClick={() => setOpen(true)}>Delete</Button>\n\n<ConfirmDialog\n  open={open}\n  tone="danger"\n  title="Delete workspace?"\n  description="This action cannot be undone."\n  confirmLabel="Delete workspace"\n  loading={deleting}\n  onCancel={() => setOpen(false)}\n  onConfirm={deleteWorkspace}\n/>`}
+            >
+              <div>
+                <p className="mb-3 text-xs font-medium text-slate-200">Inline confirm</p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <InlineConfirm
+                    label={<><HiOutlineTrash aria-hidden="true" className="h-4 w-4" /> Delete file</>}
+                    confirmLabel="Delete"
+                    onConfirm={async () => {
+                      await wait(600);
+                      showToast({ title: "File delete preview", subtitle: "No file was deleted.", type: "warning", duration: 3000 });
+                    }}
+                  />
+                  <InlineConfirm
+                    label="Revoke access"
+                    confirmLabel="Revoke"
+                    size="sm"
+                    onConfirm={() => {
+                      showToast({ title: "Access revoke preview", subtitle: "No permissions were changed.", type: "info", duration: 3000 });
+                    }}
+                  />
+                  <InlineConfirm
+                    label={<><HiOutlineArrowPath aria-hidden="true" className="h-4 w-4" /> Reset settings</>}
+                    confirmLabel="Reset"
+                    variant="primary"
+                    onConfirm={() => {
+                      showToast({ title: "Settings reset preview", subtitle: "Your settings were not changed.", type: "success", duration: 3000 });
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="h-px bg-white/10" />
+              <p className="-mb-3 text-xs font-medium text-slate-200">Dialog confirm</p>
+              <div className="flex flex-wrap gap-3">
+                <Button onClick={() => setConfirmKind("publish")}>
+                  <HiOutlineRocketLaunch aria-hidden="true" className="h-4 w-4" /> Publish changes
+                </Button>
+                <Button variant="destructive" onClick={() => setConfirmKind("delete")}>
+                  <HiOutlineTrash aria-hidden="true" className="h-4 w-4" /> Delete workspace
+                </Button>
+              </div>
+              <Alert tone="info" title="Safe demo">Confirming only simulates the action and shows a toast. No data is changed.</Alert>
+            </Showcase>
+
+            <Showcase
+              id="alerts"
+              title="Alerts & toasts"
+              description="Alerts stay in the page for contextual feedback. Toasts are temporary confirmations after an action."
+              code={`import Alert from "../../ui/Alert";\nimport { useToast } from "../../hooks/useToast";\nimport { ToastContainer } from "../../components/ToastContainer";\n\n<Alert tone="warning" title="Disk almost full">\n  Free some space to keep backups running.\n</Alert>\n\nconst { toasts, showToast, removeToast } = useToast();\nshowToast({ title: "Saved", subtitle: "Changes saved", type: "success" });\n<ToastContainer toasts={toasts} onRemove={removeToast} />`}
+            >
+              <div className="grid gap-3">
+                <Alert tone="info" title="Update available">ServerHub 2.4 includes performance improvements.</Alert>
+                <Alert tone="success" title="Backup completed">The latest snapshot was created 2 minutes ago.</Alert>
+                <Alert tone="warning" title="Disk almost full" action={<Button size="sm" variant="secondary" onClick={() => showToast({ title: "Storage review", subtitle: "This preview does not open storage settings.", type: "info", duration: 3000 })}>Review</Button>}>
+                  Free some space to keep backups running.
+                </Alert>
+                <Alert tone="danger" title="Connection failed">The database could not be reached. Check credentials and try again.</Alert>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={() => showToast({ title: "Changes saved", subtitle: "Your settings are up to date.", type: "success", duration: 3500 })}>
+                  <HiOutlineCheck aria-hidden="true" className="h-4 w-4" /> Success toast
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => showToast({ title: "Sync in progress", subtitle: "We will let you know when it is done.", type: "info", duration: 3500 })}>
+                  Info toast
+                </Button>
+                <Button size="sm" variant="destructive" onClick={() => showToast({ title: "Upload failed", subtitle: "The file exceeds the allowed size.", type: "error", duration: 3500 })}>
+                  Error toast
+                </Button>
+              </div>
+            </Showcase>
+
+            <Showcase
+              id="states"
+              title="Empty & loading"
+              description="Explain empty screens with a clear next action, and use skeletons while content loads."
+              code={`import EmptyState from "../../ui/EmptyState";\nimport Skeleton from "../../ui/Skeleton";\n\n<EmptyState\n  icon={<HiOutlineInboxStack />}\n  title="No tasks yet"\n  description="Create a task to automate recurring work."\n  action={<Button>Create task</Button>}\n/>\n\n<div aria-busy="true">\n  <Skeleton className="h-4 w-1/2" />\n</div>`}
+            >
+              <div className="grid gap-4 lg:grid-cols-2">
+                <EmptyState
+                  icon={<HiOutlineInboxStack className="h-5 w-5" />}
+                  title="No scheduled tasks"
+                  description="Create your first task to automate backups, cleanups or reports."
+                  action={
+                    <Button size="sm" onClick={() => showToast({ title: "Create task", subtitle: "This preview does not create a task.", type: "info", duration: 3000 })}>
+                      <HiOutlinePlus aria-hidden="true" className="h-4 w-4" /> Create task
+                    </Button>
+                  }
+                />
+                <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <p className="text-xs font-medium text-slate-200">Loading preview</p>
+                    <Button size="sm" variant="secondary" onClick={() => setShowSkeleton((previous) => !previous)}>
+                      <HiOutlineArrowPath aria-hidden="true" className="h-4 w-4" /> {showSkeleton ? "Show content" : "Show loading"}
+                    </Button>
+                  </div>
+                  {showSkeleton ? (
+                    <div aria-busy="true" aria-label="Loading tasks" className="space-y-3">
+                      {[0, 1, 2].map((item) => (
+                        <div key={item} className="flex items-center gap-3">
+                          <Skeleton className="h-8 w-8 rounded-lg" />
+                          <div className="flex-1 space-y-2">
+                            <Skeleton className="h-3 w-2/3" />
+                            <Skeleton className="h-2.5 w-1/3" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <ul className="space-y-3">
+                      {["Nightly backup", "Clean temporary files", "Weekly usage report"].map((task) => (
+                        <li key={task} className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs">
+                          {task}
+                          <Badge tone="success">Active</Badge>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </Showcase>
+
+            <Showcase
               id="feedback"
               title="Badges & colors"
               description="Neutral surfaces with semantic accents. Always pair status colors with a text label."
@@ -225,6 +444,21 @@ export default function UiLibraryPage() {
           </div>
         </div>
       </main>
+      <ConfirmDialog
+        open={confirmKind !== null}
+        tone={confirmKind === "delete" ? "danger" : "default"}
+        title={confirmKind === "delete" ? "Delete workspace?" : "Publish changes?"}
+        description={
+          confirmKind === "delete"
+            ? "This will permanently remove the workspace and its settings. In this preview, nothing will be deleted."
+            : "Your changes will become visible to everyone in this workspace."
+        }
+        confirmLabel={confirmKind === "delete" ? "Delete workspace" : "Publish"}
+        loading={confirmLoading}
+        onCancel={closeConfirm}
+        onConfirm={() => void confirmAction()}
+      />
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>
   );
 }

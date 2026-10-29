@@ -179,9 +179,11 @@ Their category and notes are free text; documents are catalog records, not file 
   and **New item / document** (`N`). Use `Cmd` instead of `Ctrl` on macOS.
   The single-key shortcut is ignored while typing in fields, editable content,
   or navigating menus. New entries are placed in the open container.
-- The compact app toolbar contains breadcrumbs, **Edit container** (when inside a
-  container), **Container**, **Add entry**, and **Refresh**. Statistics and duplicate
+- The compact app toolbar contains breadcrumbs, then **Refresh**, **Edit container**
+  (when inside a container), **Container**, and **Add entry**. Statistics and duplicate
   context metadata are omitted; search and the low-stock filter remain available.
+- **View** offers **Refresh** (`R`) and fullscreen. The refresh shortcut is ignored
+  while typing, navigating menus, loading/saving, or while a dialog is open.
 - **Edit** offers **Edit container**, **Edit selected item**, **Context settings**
   and **Delete context** (with confirmation).
   Actions are disabled when there is no applicable selection, while loading/saving,
